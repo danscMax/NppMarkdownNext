@@ -525,6 +525,16 @@ h1, h2, h3, h4, h5, h6 {
     line-height: 1.35;
     scroll-margin-top: 60px;
     color: var(--text-primary);
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+}
+
+h1:hover, h2:hover, h3:hover, h4:hover, h5:hover, h6:hover {
+    opacity: 0.82;
+}
+
+ol[dir="rtl"] {
+    list-style-type: persian;
 }
 
 h1 { font-size: 1.9em; letter-spacing: -0.4px; }
@@ -999,13 +1009,15 @@ PreviewComponents HtmlExporter::GeneratePreviewComponents(
                 std::wstring hText = InlinesToHtml(block.inlines);
 
                 bodyStream << L"<h" << hNum << L" id=\"" << hId << L"\" data-source-line=\""
-                           << block.sourceLineStart << L"\"" << dirAttr << L">"
+                           << block.sourceLineStart << L"\"" << dirAttr
+                           << L" onclick=\"jumpToSource(this)\" title=\"Click to jump to editor line\">"
                            << hText << L"</h" << hNum << L">\n";
 
-                // Add to TOC
+                // Add to TOC (use InlinesToPlainText to prevent nested <a> tags)
+                std::wstring tocText = InlinesToPlainText(block.inlines);
                 tocStream << L"<a href=\"#" << hId << L"\" class=\"toc-item toc-l" << hNum << L"\""
                           << dirAttr << L" onclick=\"onTocClick('" << hId << L"'); return false;\">"
-                          << hText << L"</a>\n";
+                          << EscapeHtml(tocText) << L"</a>\n";
                 break;
             }
 
@@ -1057,6 +1069,15 @@ PreviewComponents HtmlExporter::GeneratePreviewComponents(
                     for (const auto& cl : block.codeLines) {
                         bodyStream << EscapeHtml(cl) << L"\n";
                     }
+                    bodyStream << L"</div>\n";
+                } else if (block.codeLanguage == L"math" || block.codeLanguage == L"latex" || block.codeLanguage == L"katex") {
+                    bodyStream << L"<div class=\"katex-display katex\" data-source-line=\"" << block.sourceLineStart << L"\" dir=\"ltr\">\n";
+                    std::wstring mathCode;
+                    for (size_t k = 0; k < block.codeLines.size(); ++k) {
+                        if (k > 0) mathCode += L"\n";
+                        mathCode += block.codeLines[k];
+                    }
+                    bodyStream << L"<span class=\"katex-math\" data-tex=\"" << EscapeHtml(mathCode) << L"\">$$" << EscapeHtml(mathCode) << L"$$</span>\n";
                     bodyStream << L"</div>\n";
                 } else {
                     std::wstring langDisplay = block.codeLanguage.empty() ? L"TEXT" : block.codeLanguage;
@@ -1270,12 +1291,28 @@ function renderLocalMath() {
         "cdot": "·", "approx": "≈", "neq": "≠", "ne": "≠", "le": "≤", "leq": "≤",
         "ge": "≥", "geq": "≥", "in": "∈", "notin": "∉", "partial": "∂",
         "sum": "∑", "prod": "∏", "int": "∫", "oint": "∮", "to": "→", "rightarrow": "→",
-        "leftarrow": "←", "Rightarrow": "⇒", "Leftarrow": "⇐", "forall": "∀", "exists": "∃"
+        "leftarrow": "←", "Rightarrow": "⇒", "Leftarrow": "⇐", "forall": "∀", "exists": "∃",
+        "sin": "sin", "cos": "cos", "tan": "tan", "cot": "cot", "sec": "sec", "csc": "csc",
+        "arcsin": "arcsin", "arccos": "arccos", "arctan": "arctan",
+        "sinh": "sinh", "cosh": "cosh", "tanh": "tanh",
+        "log": "log", "ln": "ln", "exp": "exp", "lim": "lim", "min": "min", "max": "max",
+        "det": "det", "gcd": "gcd", "deg": "deg",
+        "quad": "  ", "qquad": "    ", "dots": "…", "cdots": "⋯", "ldots": "…",
+        "uparrow": "↑", "downarrow": "↓", "equiv": "≡", "sim": "∼", "simeq": "≃", "cong": "≅"
     };
 
     function texToMathML(tex, isBlock) {
         var str = tex.trim();
-        var fracRegex = /\\frac\s*\{([^{}]+)\}\s*\{([^{}]+)\}/g;
+        str = str.replace(/\\text\s*\{([^{}]+)\}/g, function(_, txt) {
+            return '<mtext>' + txt + '</mtext>';
+        });
+        str = str.replace(/\\mathbf\s*\{([^{}]+)\}/g, function(_, txt) {
+            return '<mstyle mathvariant="bold">' + convertTokens(txt) + '</mstyle>';
+        });
+        str = str.replace(/\\mathrm\s*\{([^{}]+)\}/g, function(_, txt) {
+            return '<mstyle mathvariant="normal">' + convertTokens(txt) + '</mstyle>';
+        });
+        var fracRegex = /\\frac\s*\{([^{}]+)\}/g;
         while (fracRegex.test(str)) {
             str = str.replace(fracRegex, function(_, a, b) {
                 return '<mfrac><mrow>' + convertTokens(a) + '</mrow><mrow>' + convertTokens(b) + '</mrow></mfrac>';
@@ -1307,12 +1344,15 @@ function renderLocalMath() {
     }
 
     function tokenChunk(s) {
+        var funcNames = "sincostancotseccscarcsinarccosarctansinhcoshtanhloglnexplimminmaxdetgcddeg";
         return s.replace(/\\([a-zA-Z]+)/g, function(match, name) {
             if (mathSymbols[name]) {
                 var sym = mathSymbols[name];
                 if ("∑∏∫∮".indexOf(sym) !== -1) {
                     return '<mo largeop="true">' + sym + '</mo>';
                 } else if ("±×÷·≈≠≤≥∈∉→←⇒⇐∀∃".indexOf(sym) !== -1) {
+                    return '<mo>' + sym + '</mo>';
+                } else if (funcNames.indexOf(name) !== -1) {
                     return '<mo>' + sym + '</mo>';
                 }
                 return '<mi>' + sym + '</mi>';
@@ -1323,7 +1363,7 @@ function renderLocalMath() {
           .replace(/(?![^<]*>)([a-zA-Z])/g, '<mi>$1</mi>');
     }
 
-    // 1. Process explicit .katex-inline elements
+    // 1. Process explicit .katex-inline and .katex-display elements
     var inlines = container.querySelectorAll(".katex-inline");
     inlines.forEach(function(el) {
         if (el.querySelector("math")) return;
@@ -1334,12 +1374,22 @@ function renderLocalMath() {
         }
     });
 
+    var displays = container.querySelectorAll(".katex-display .katex-math");
+    displays.forEach(function(el) {
+        if (el.querySelector("math")) return;
+        var tex = el.getAttribute("data-tex") || el.textContent.trim().replace(/^\$\$|\$\$$/g, '');
+        if (tex) {
+            el.innerHTML = texToMathML(tex, true);
+            el.classList.add("katex");
+        }
+    });
+
     // 2. Process display math blocks ($$...$$) and remaining inline math in text
     var walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null, false);
     var textNodes = [];
     while (walker.nextNode()) {
         var node = walker.currentNode;
-        if (node.parentElement && (node.parentElement.tagName === "PRE" || node.parentElement.tagName === "CODE" || node.parentElement.tagName === "SCRIPT" || node.parentElement.tagName === "STYLE" || node.parentElement.closest("pre, code, math, .katex-inline"))) continue;
+        if (node.parentElement && (node.parentElement.tagName === "PRE" || node.parentElement.tagName === "CODE" || node.parentElement.tagName === "SCRIPT" || node.parentElement.tagName === "STYLE" || node.parentElement.closest("pre, code, math, .katex-inline, .katex-display"))) continue;
         if (node.nodeValue.indexOf("$") !== -1) {
             textNodes.push(node);
         }
@@ -1347,40 +1397,57 @@ function renderLocalMath() {
 
     textNodes.forEach(function(node) {
         var text = node.nodeValue;
+        if (!text || text.indexOf("$") === -1) return;
+
+        // Process $$...$$ first if present
         if (text.indexOf("$$") !== -1) {
-            var parts = text.split("$$");
-            if (parts.length >= 3) {
+            var displayRegex = /\$\$([^\$]+?)\$\$/g;
+            if (displayRegex.test(text)) {
+                displayRegex.lastIndex = 0;
                 var frag = document.createDocumentFragment();
-                for (var i = 0; i < parts.length; i++) {
-                    if (i % 2 === 1) {
-                        var span = document.createElement("div");
-                        span.className = "katex-display katex";
-                        span.innerHTML = texToMathML(parts[i], true);
-                        frag.appendChild(span);
-                    } else if (parts[i].length > 0) {
-                        frag.appendChild(document.createTextNode(parts[i]));
+                var lastIdx = 0;
+                var m;
+                while ((m = displayRegex.exec(text)) !== null) {
+                    if (m.index > lastIdx) {
+                        frag.appendChild(document.createTextNode(text.substring(lastIdx, m.index)));
                     }
+                    var span = document.createElement("div");
+                    span.className = "katex-display katex";
+                    span.innerHTML = texToMathML(m[1], true);
+                    frag.appendChild(span);
+                    lastIdx = m.index + m[0].length;
+                }
+                if (lastIdx < text.length) {
+                    frag.appendChild(document.createTextNode(text.substring(lastIdx)));
                 }
                 node.parentNode.replaceChild(frag, node);
                 return;
             }
         }
-        if (text.indexOf("$") !== -1) {
-            var parts = text.split("$");
-            if (parts.length >= 3) {
-                var frag = document.createDocumentFragment();
-                for (var i = 0; i < parts.length; i++) {
-                    if (i % 2 === 1) {
-                        var span = document.createElement("span");
-                        span.className = "katex-inline katex";
-                        span.innerHTML = texToMathML(parts[i], false);
-                        frag.appendChild(span);
-                    } else if (parts[i].length > 0) {
-                        frag.appendChild(document.createTextNode(parts[i]));
-                    }
+
+        // Process $...$ inline math (ignoring price patterns like $50 and $10)
+        var inlineRegex = /(?:^|[^\\])\$([^\$\s](?:[^$]*?[^\$\s])?)\$/g;
+        if (inlineRegex.test(text)) {
+            inlineRegex.lastIndex = 0;
+            var frag = document.createDocumentFragment();
+            var lastIdx = 0;
+            var m;
+            while ((m = inlineRegex.exec(text)) !== null) {
+                var matchStart = m.index;
+                if (m[0][0] !== '$') matchStart++;
+                if (matchStart > lastIdx) {
+                    frag.appendChild(document.createTextNode(text.substring(lastIdx, matchStart)));
                 }
-                node.parentNode.replaceChild(frag, node);
+                var span = document.createElement("span");
+                span.className = "katex-inline katex";
+                span.innerHTML = texToMathML(m[1], false);
+                frag.appendChild(span);
+                lastIdx = matchStart + (m[0][0] !== '$' ? m[0].length - 1 : m[0].length);
             }
+            if (lastIdx < text.length) {
+                frag.appendChild(document.createTextNode(text.substring(lastIdx)));
+            }
+            node.parentNode.replaceChild(frag, node);
         }
     });
 }
@@ -1443,10 +1510,11 @@ function renderLocalMermaid() {
             }
             return { id: id, label: label };
         }
-
         for (var i = 0; i < lines.length; i++) {
             var line = lines[i];
-            if (line.indexOf("graph") === 0 || line.indexOf("flowchart") === 0) continue;
+            if (line.indexOf("graph") === 0 || line.indexOf("flowchart") === 0 ||
+                line.indexOf("subgraph") === 0 || line === "end" || line.indexOf("%%") === 0 ||
+                line.indexOf("style ") === 0 || line.indexOf("classDef ") === 0 || line.indexOf("class ") === 0) continue;
 
             var arrowMatch = line.match(/\s*(-->|==>|-\.->|---)\s*(?:\|(.*?)\|)?\s*/);
             if (arrowMatch) {
@@ -1616,6 +1684,24 @@ function handleTaskCheck(cb) {
         window.chrome.webview.postMessage("toggleCheckbox:" + line);
     }
 }
+
+// Bi-directional source jump: Click on heading or double-click anywhere to jump to editor line
+function jumpToSource(el) {
+    if (!el) return;
+    var target = (el.closest && el.closest("[data-source-line]")) ? el.closest("[data-source-line]") : el;
+    var line = target.getAttribute ? target.getAttribute("data-source-line") : null;
+    if (line !== null && line !== undefined && line !== "" && window.chrome && window.chrome.webview) {
+        window.chrome.webview.postMessage("jumpToLine:" + line);
+    }
+}
+
+document.addEventListener("dblclick", function(e) {
+    if (e.target.closest("button, input, textarea, a")) return;
+    var target = e.target.closest("[data-source-line]");
+    if (target) {
+        jumpToSource(target);
+    }
+});
 
 function fallbackCopy(text, onSuccess) {
     var ta = document.createElement("textarea");
@@ -2216,8 +2302,8 @@ bool HtmlExporter::SaveToFile(const std::wstring& filePath, const MarkdownDocume
 }
 
 bool HtmlExporter::CopyToClipboard(HWND hwndOwner, const MarkdownDocument& doc, const std::wstring& title, bool isDarkMode) {
-    std::string html = GeneratePreviewHtml(doc, title, isDarkMode, 1.0f, false);
-    std::string cfHtml = GenerateCfHtml(html);
+    auto components = GeneratePreviewComponents(doc, title, isDarkMode, 1.0f, false);
+    std::string cfHtml = GenerateCfHtml(components.bodyHtml);
 
     if (!OpenClipboard(hwndOwner)) return false;
     EmptyClipboard();
@@ -2263,6 +2349,14 @@ std::string HtmlExporter::GenerateCfHtml(const std::string& htmlFragment) {
         startHtmlPos, endHtmlPos, startFragPos, endFragPos);
 
     return std::string(buf) + startHtml + htmlFragment + endHtml;
+}
+
+std::wstring HtmlExporter::InlinesToPlainText(const std::vector<MarkdownSpan>& inlines) {
+    std::wstring result;
+    for (const auto& span : inlines) {
+        result += span.text;
+    }
+    return result;
 }
 
 std::wstring HtmlExporter::InlinesToHtml(const std::vector<MarkdownSpan>& inlines) {

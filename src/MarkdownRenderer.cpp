@@ -104,6 +104,7 @@ HRESULT MarkdownRenderer::CreateDeviceIndependentResources() {
     if (m_pFormatBody) {
         m_pFormatBody->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
     }
+    m_pDWriteFactory->CreateTextFormat(fontText, nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, scaledBase, L"fa-ir", &m_pFormatBodyRTL);
     if (m_pFormatBodyRTL) {
         m_pFormatBodyRTL->SetReadingDirection(DWRITE_READING_DIRECTION_RIGHT_TO_LEFT);
         m_pFormatBodyRTL->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
@@ -374,6 +375,42 @@ void MarkdownRenderer::Layout(float clientWidth) {
     float contentW = (std::max)(120.0f, clientWidth - (padX * 2.0f));
     float currentY = 16.0f * m_zoom;
 
+    auto getPlainText = [](const MarkdownBlock& blk) -> std::wstring {
+        std::wstring res;
+        for (const auto& span : blk.inlines) res += span.text;
+        return res.empty() ? blk.rawText : res;
+    };
+
+    auto applyInlineStyles = [&](IDWriteTextLayout* pLayout, const std::vector<MarkdownSpan>& inlines, size_t totalLen) {
+        if (!pLayout) return;
+        size_t charPos = 0;
+        for (const auto& span : inlines) {
+            if (static_cast<UINT32>(charPos) + static_cast<UINT32>(span.text.size()) <= static_cast<UINT32>(totalLen)) {
+                DWRITE_TEXT_RANGE range = { static_cast<UINT32>(charPos), static_cast<UINT32>(span.text.size()) };
+                if (span.type == InlineStyleType::Bold) {
+                    pLayout->SetFontWeight(DWRITE_FONT_WEIGHT_BOLD, range);
+                } else if (span.type == InlineStyleType::Italic) {
+                    pLayout->SetFontStyle(DWRITE_FONT_STYLE_ITALIC, range);
+                } else if (span.type == InlineStyleType::BoldItalic) {
+                    pLayout->SetFontWeight(DWRITE_FONT_WEIGHT_BOLD, range);
+                    pLayout->SetFontStyle(DWRITE_FONT_STYLE_ITALIC, range);
+                } else if (span.type == InlineStyleType::Highlight) {
+                    pLayout->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD, range);
+                    pLayout->SetDrawingEffect(m_pBrushH3, range);
+                } else if (span.type == InlineStyleType::InlineCode || span.type == InlineStyleType::InlineMath) {
+                    pLayout->SetFontFamilyName(L"Consolas", range);
+                    pLayout->SetDrawingEffect(m_pBrushType, range);
+                } else if (span.type == InlineStyleType::Strikethrough) {
+                    pLayout->SetStrikethrough(TRUE, range);
+                } else if (span.type == InlineStyleType::Link) {
+                    pLayout->SetUnderline(TRUE, range);
+                    pLayout->SetDrawingEffect(m_pBrushLink, range);
+                }
+            }
+            charPos += span.text.size();
+        }
+    };
+
     for (const auto& block : m_doc.blocks) {
         RenderItem item;
         item.type = block.type;
@@ -408,9 +445,10 @@ void MarkdownRenderer::Layout(float clientWidth) {
                 blockMarginBottom = 10.0f * m_zoom;
                 currentY += blockMarginTop;
 
+                std::wstring plainText = getPlainText(block);
                 m_pDWriteFactory->CreateTextLayout(
-                    block.rawText.c_str(),
-                    static_cast<UINT32>(block.rawText.size()),
+                    plainText.c_str(),
+                    static_cast<UINT32>(plainText.size()),
                     pFormat,
                     contentW,
                     10000.0f,
@@ -418,7 +456,11 @@ void MarkdownRenderer::Layout(float clientWidth) {
                 );
 
                 if (item.pLayout) {
-                    if (block.isRTL) item.pLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+                    if (block.isRTL) {
+                        item.pLayout->SetReadingDirection(DWRITE_READING_DIRECTION_RIGHT_TO_LEFT);
+                        item.pLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                    }
+                    applyInlineStyles(item.pLayout, block.inlines, plainText.size());
                     DWRITE_TEXT_METRICS tm;
                     item.pLayout->GetMetrics(&tm);
                     item.rect = D2D1::RectF(padX, currentY, padX + contentW, currentY + tm.height);
@@ -459,7 +501,7 @@ void MarkdownRenderer::Layout(float clientWidth) {
                     if (pLineLayout) {
                         if (BiDiEngine::IsParagraphRTL(codeLine)) {
                             pLineLayout->SetReadingDirection(DWRITE_READING_DIRECTION_RIGHT_TO_LEFT);
-                            pLineLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+                            pLineLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                         }
                         auto tokens = SyntaxHighlighter::Tokenize(codeLine, block.codeLanguage);
                         for (const auto& tok : tokens) {
@@ -587,7 +629,8 @@ void MarkdownRenderer::Layout(float clientWidth) {
                     &item.pAlertTitleLayout
                 );
                 if (item.pAlertTitleLayout && block.isRTL) {
-                    item.pAlertTitleLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+                    item.pAlertTitleLayout->SetReadingDirection(DWRITE_READING_DIRECTION_RIGHT_TO_LEFT);
+                    item.pAlertTitleLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                 }
 
                 float titleH = 22.0f * m_zoom;
@@ -598,9 +641,10 @@ void MarkdownRenderer::Layout(float clientWidth) {
                 }
 
                 IDWriteTextFormat* pFormat = block.isRTL ? m_pFormatBodyRTL : m_pFormatBody;
+                std::wstring plainText = getPlainText(block);
                 m_pDWriteFactory->CreateTextLayout(
-                    block.rawText.c_str(),
-                    static_cast<UINT32>(block.rawText.size()),
+                    plainText.c_str(),
+                    static_cast<UINT32>(plainText.size()),
                     pFormat,
                     contentW - (28.0f * m_zoom),
                     10000.0f,
@@ -609,6 +653,11 @@ void MarkdownRenderer::Layout(float clientWidth) {
 
                 float bodyH = 0.0f;
                 if (item.pLayout) {
+                    if (block.isRTL) {
+                        item.pLayout->SetReadingDirection(DWRITE_READING_DIRECTION_RIGHT_TO_LEFT);
+                        item.pLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                    }
+                    applyInlineStyles(item.pLayout, block.inlines, plainText.size());
                     DWRITE_TEXT_METRICS tm;
                     item.pLayout->GetMetrics(&tm);
                     bodyH = tm.height;
@@ -629,9 +678,10 @@ void MarkdownRenderer::Layout(float clientWidth) {
                 float quoteW = contentW - quoteIndent - (16.0f * m_zoom);
 
                 IDWriteTextFormat* pFormat = block.isRTL ? m_pFormatBodyRTL : m_pFormatBody;
+                std::wstring plainText = getPlainText(block);
                 m_pDWriteFactory->CreateTextLayout(
-                    block.rawText.c_str(),
-                    static_cast<UINT32>(block.rawText.size()),
+                    plainText.c_str(),
+                    static_cast<UINT32>(plainText.size()),
                     pFormat,
                     quoteW,
                     10000.0f,
@@ -639,6 +689,11 @@ void MarkdownRenderer::Layout(float clientWidth) {
                 );
 
                 if (item.pLayout) {
+                    if (block.isRTL) {
+                        item.pLayout->SetReadingDirection(DWRITE_READING_DIRECTION_RIGHT_TO_LEFT);
+                        item.pLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                    }
+                    applyInlineStyles(item.pLayout, block.inlines, plainText.size());
                     DWRITE_TEXT_METRICS tm;
                     item.pLayout->GetMetrics(&tm);
                     float boxH = tm.height + (12.0f * m_zoom);
@@ -657,9 +712,10 @@ void MarkdownRenderer::Layout(float clientWidth) {
                 float listW = contentW - indent - prefixW;
 
                 IDWriteTextFormat* pFormat = block.isRTL ? m_pFormatBodyRTL : m_pFormatBody;
+                std::wstring plainText = getPlainText(block);
                 m_pDWriteFactory->CreateTextLayout(
-                    block.rawText.c_str(),
-                    static_cast<UINT32>(block.rawText.size()),
+                    plainText.c_str(),
+                    static_cast<UINT32>(plainText.size()),
                     pFormat,
                     listW,
                     10000.0f,
@@ -667,6 +723,11 @@ void MarkdownRenderer::Layout(float clientWidth) {
                 );
 
                 if (item.pLayout) {
+                    if (block.isRTL) {
+                        item.pLayout->SetReadingDirection(DWRITE_READING_DIRECTION_RIGHT_TO_LEFT);
+                        item.pLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                    }
+                    applyInlineStyles(item.pLayout, block.inlines, plainText.size());
                     DWRITE_TEXT_METRICS tm;
                     item.pLayout->GetMetrics(&tm);
                     float itemH = (std::max)(tm.height, 20.0f * m_zoom);
@@ -691,9 +752,12 @@ void MarkdownRenderer::Layout(float clientWidth) {
             default: {
                 currentY += 6.0f * m_zoom;
                 IDWriteTextFormat* pFormat = block.isRTL ? m_pFormatBodyRTL : m_pFormatBody;
+
+                std::wstring plainText = getPlainText(block);
+
                 m_pDWriteFactory->CreateTextLayout(
-                    block.rawText.c_str(),
-                    static_cast<UINT32>(block.rawText.size()),
+                    plainText.c_str(),
+                    static_cast<UINT32>(plainText.size()),
                     pFormat,
                     contentW,
                     10000.0f,
@@ -701,34 +765,11 @@ void MarkdownRenderer::Layout(float clientWidth) {
                 );
 
                 if (item.pLayout) {
-                    // Apply inline styling
-                    size_t charPos = 0;
-                    for (const auto& span : block.inlines) {
-                        if (static_cast<UINT32>(charPos) + static_cast<UINT32>(span.text.size()) <= static_cast<UINT32>(block.rawText.size())) {
-                            DWRITE_TEXT_RANGE range = { static_cast<UINT32>(charPos), static_cast<UINT32>(span.text.size()) };
-                            if (span.type == InlineStyleType::Bold) {
-                                item.pLayout->SetFontWeight(DWRITE_FONT_WEIGHT_BOLD, range);
-                            } else if (span.type == InlineStyleType::Italic) {
-                                item.pLayout->SetFontStyle(DWRITE_FONT_STYLE_ITALIC, range);
-                            } else if (span.type == InlineStyleType::BoldItalic) {
-                                item.pLayout->SetFontWeight(DWRITE_FONT_WEIGHT_BOLD, range);
-                                item.pLayout->SetFontStyle(DWRITE_FONT_STYLE_ITALIC, range);
-                            } else if (span.type == InlineStyleType::Highlight) {
-                                item.pLayout->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD, range);
-                                item.pLayout->SetDrawingEffect(m_pBrushH3, range);
-                            } else if (span.type == InlineStyleType::InlineCode || span.type == InlineStyleType::InlineMath) {
-                                item.pLayout->SetFontFamilyName(L"Consolas", range);
-                                item.pLayout->SetDrawingEffect(m_pBrushType, range);
-                            } else if (span.type == InlineStyleType::Strikethrough) {
-                                item.pLayout->SetStrikethrough(TRUE, range);
-                            } else if (span.type == InlineStyleType::Link) {
-                                item.pLayout->SetUnderline(TRUE, range);
-                                item.pLayout->SetDrawingEffect(m_pBrushLink, range);
-                            }
-                        }
-                        charPos += span.text.size();
+                    if (block.isRTL) {
+                        item.pLayout->SetReadingDirection(DWRITE_READING_DIRECTION_RIGHT_TO_LEFT);
+                        item.pLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                     }
-
+                    applyInlineStyles(item.pLayout, block.inlines, plainText.size());
                     DWRITE_TEXT_METRICS tm;
                     item.pLayout->GetMetrics(&tm);
                     item.rect = D2D1::RectF(padX, currentY, padX + contentW, currentY + tm.height);
@@ -1159,23 +1200,23 @@ bool MarkdownRenderer::OnLButtonDown(int x, int y, HWND hSciEditor) {
 
                 // Toggle checkbox in Scintilla source!
                 int line = item.sourceLineStart;
-                int linePos = static_cast<int>(SendMessage(hSciEditor, SCI_POSITIONFROMLINE, line, 0));
-                int lineEnd = static_cast<int>(SendMessage(hSciEditor, SCI_POSITIONFROMLINE, line + 1, 0));
-                int lineLen = lineEnd - linePos;
+                int lineLen = static_cast<int>(SendMessage(hSciEditor, SCI_LINELENGTH, line, 0));
                 if (lineLen > 0) {
+                    int linePos = static_cast<int>(SendMessage(hSciEditor, SCI_POSITIONFROMLINE, line, 0));
                     std::string lineBuf(lineLen + 1, '\0');
-                    SendMessage(hSciEditor, SCI_GETTEXT, lineLen + 1, (LPARAM)&lineBuf[0]);
-                    // Search for [ ] or [x]
+                    SendMessage(hSciEditor, SCI_GETLINE, line, (LPARAM)&lineBuf[0]);
+                    lineBuf.resize(lineLen);
+
                     size_t posUnchecked = lineBuf.find("[ ]");
                     size_t posChecked = lineBuf.find("[x]");
                     if (posChecked == std::string::npos) posChecked = lineBuf.find("[X]");
 
-                    if (item.isTaskChecked && posChecked != std::string::npos) {
-                        SendMessage(hSciEditor, SCI_SETSEL, linePos + posChecked + 1, linePos + posChecked + 2);
-                        SendMessage(hSciEditor, SCI_REPLACESEL, 0, (LPARAM)" ");
-                    } else if (!item.isTaskChecked && posUnchecked != std::string::npos) {
-                        SendMessage(hSciEditor, SCI_SETSEL, linePos + posUnchecked + 1, linePos + posUnchecked + 2);
-                        SendMessage(hSciEditor, SCI_REPLACESEL, 0, (LPARAM)"x");
+                    if (posUnchecked != std::string::npos) {
+                        SendMessage(hSciEditor, SCI_SETSEL, linePos + static_cast<int>(posUnchecked), linePos + static_cast<int>(posUnchecked) + 3);
+                        SendMessage(hSciEditor, SCI_REPLACESEL, 0, (LPARAM)"[x]");
+                    } else if (posChecked != std::string::npos) {
+                        SendMessage(hSciEditor, SCI_SETSEL, linePos + static_cast<int>(posChecked), linePos + static_cast<int>(posChecked) + 3);
+                        SendMessage(hSciEditor, SCI_REPLACESEL, 0, (LPARAM)"[ ]");
                     }
                 }
                 return true;

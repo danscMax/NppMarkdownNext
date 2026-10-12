@@ -213,8 +213,8 @@ bool WebView2Viewer::Initialize(HWND hParentWnd, const std::wstring& userDataDir
     );
 
     HRESULT hr = pfnCreate(nullptr, targetUserData.c_str(), nullptr, envHandler);
+    envHandler->Release();
     if (FAILED(hr)) {
-        envHandler->Release();
         m_isInitializing = false;
         return false;
     }
@@ -239,6 +239,7 @@ void WebView2Viewer::OnEnvironmentCreated(HRESULT result, ICoreWebView2Environme
     );
 
     m_pEnvironment->CreateCoreWebView2Controller(m_hParent, controllerHandler);
+    controllerHandler->Release();
 }
 
 void WebView2Viewer::OnControllerCreated(HRESULT result, ICoreWebView2Controller* controller) {
@@ -280,6 +281,7 @@ void WebView2Viewer::OnControllerCreated(HRESULT result, ICoreWebView2Controller
             }
         );
         m_pWebView->add_WebMessageReceived(msgHandler, &msgToken);
+        msgHandler->Release();
 
         // Register NavigationStarting handler to open external links in default browser
         EventRegistrationToken navToken;
@@ -299,6 +301,7 @@ void WebView2Viewer::OnControllerCreated(HRESULT result, ICoreWebView2Controller
             }
         );
         m_pWebView->add_NavigationStarting(navHandler, &navToken);
+        navHandler->Release();
 
         // Register ZoomFactorChanged handler to sync native browser zoom (e.g. Ctrl+Wheel / pinch)
         EventRegistrationToken zoomToken;
@@ -317,6 +320,7 @@ void WebView2Viewer::OnControllerCreated(HRESULT result, ICoreWebView2Controller
             }
         );
         m_pController->add_ZoomFactorChanged(zoomHandler, &zoomToken);
+        zoomHandler->Release();
 
         m_isInitialized = true;
 
@@ -450,6 +454,16 @@ void WebView2Viewer::OnWebMessageReceived(const std::wstring& message) {
         int line = _wtoi(lineStr.c_str());
         if (m_checkboxCallback) {
             m_checkboxCallback(line);
+        }
+        return;
+    }
+
+    const std::wstring prefixJump = L"jumpToLine:";
+    if (message.find(prefixJump) == 0) {
+        std::wstring lineStr = message.substr(prefixJump.length());
+        int line = _wtoi(lineStr.c_str());
+        if (m_jumpToLineCallback) {
+            m_jumpToLineCallback(line);
         }
         return;
     }

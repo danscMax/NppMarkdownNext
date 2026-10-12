@@ -142,14 +142,14 @@ bool NppMarkdownNext::CreatePanelWindow() {
     if (m_useWebView2) {
         m_webViewViewer.SetDarkMode(isDark);
         m_webViewViewer.SetZoom(m_config.zoomLevel);
-        m_webViewViewer.SetCheckboxCallback([this](int lineNo) {
+        m_webViewViewer.SetCheckboxCallback([this](int lineIdx) {
             HWND hSci = GetCurrentScintilla();
-            if (!hSci || lineNo < 1) return;
-            int lineStart = static_cast<int>(SendMessage(hSci, SCI_POSITIONFROMLINE, lineNo - 1, 0));
-            int lineLen = static_cast<int>(SendMessage(hSci, SCI_LINELENGTH, lineNo - 1, 0));
+            if (!hSci || lineIdx < 0) return;
+            int lineStart = static_cast<int>(SendMessage(hSci, SCI_POSITIONFROMLINE, lineIdx, 0));
+            int lineLen = static_cast<int>(SendMessage(hSci, SCI_LINELENGTH, lineIdx, 0));
             if (lineLen > 0) {
                 std::string lineText(lineLen + 1, '\0');
-                SendMessage(hSci, SCI_GETLINE, lineNo - 1, (LPARAM)&lineText[0]);
+                SendMessage(hSci, SCI_GETLINE, lineIdx, (LPARAM)&lineText[0]);
                 lineText.resize(lineLen);
 
                 size_t uncheckedPos = lineText.find("[ ]");
@@ -165,6 +165,13 @@ bool NppMarkdownNext::CreatePanelWindow() {
                     }
                 }
             }
+        });
+        m_webViewViewer.SetJumpToLineCallback([this](int lineIdx) {
+            HWND hSci = GetCurrentScintilla();
+            if (!hSci || lineIdx < 0) return;
+            SendMessage(hSci, SCI_ENSUREVISIBLE, lineIdx, 0);
+            SendMessage(hSci, SCI_GOTOLINE, lineIdx, 0);
+            SetFocus(hSci);
         });
         m_webViewViewer.SetSyncCallback([this]() {
             ToggleSyncWithCaret();
@@ -252,7 +259,7 @@ std::wstring NppMarkdownNext::GetCurrentBufferPath() const {
 
 bool NppMarkdownNext::IsCurrentBufferMarkdown() const {
     std::wstring path = GetCurrentBufferPath();
-    if (path.empty()) return true; // New empty file
+    if (path.empty() || path.find(L'\\') == std::wstring::npos) return true; // Unsaved tab like "new 1"
 
     size_t dotPos = path.find_last_of(L'.');
     if (dotPos == std::wstring::npos) return false;
@@ -398,6 +405,7 @@ void NppMarkdownNext::ShowAbout() {
 
 void NppMarkdownNext::RequestRenderDebounced() {
     if (!m_isPanelVisible) return;
+    if (!IsCurrentBufferMarkdown()) return;
     SetTimer(m_hPanel, IDT_RENDER_DEBOUNCE, RENDER_DEBOUNCE_DELAY_MS, nullptr);
 }
 
@@ -413,7 +421,7 @@ void NppMarkdownNext::ExecuteRender() {
         if (m_config.syncWithCaret) {
             int line = GetScintillaCaretLine(hSci);
             if (m_useWebView2) {
-                m_webViewViewer.ScrollToLine(line + 1);
+                m_webViewViewer.ScrollToLine(line);
             } else {
                 m_renderer.ScrollToSourceLine(line);
             }
@@ -453,7 +461,7 @@ void NppMarkdownNext::ExecuteRender() {
 
         if (m_config.syncWithCaret) {
             int line = GetScintillaCaretLine(hSci);
-            m_webViewViewer.ScrollToLine(line + 1);
+            m_webViewViewer.ScrollToLine(line);
         }
     } else {
         // Layout in Renderer
@@ -485,10 +493,13 @@ void NppMarkdownNext::OnNotification(SCNotification* notifyCode) {
             HWND hSci = GetCurrentScintilla();
             if (hSci) {
                 int line = GetScintillaCaretLine(hSci);
-                if (m_useWebView2) {
-                    m_webViewViewer.ScrollToLine(line + 1);
-                } else {
-                    m_renderer.ScrollToSourceLine(line);
+                if (line != m_lastScrolledCaretLine) {
+                    m_lastScrolledCaretLine = line;
+                    if (m_useWebView2) {
+                        m_webViewViewer.ScrollToLine(line);
+                    } else {
+                        m_renderer.ScrollToSourceLine(line);
+                    }
                 }
             }
         }
@@ -515,6 +526,7 @@ void NppMarkdownNext::OnBufferActivated() {
 
     if (m_isPanelVisible) {
         m_lastRawContent.clear();
+        m_lastScrolledCaretLine = -1;
         ExecuteRender();
     }
 }

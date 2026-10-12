@@ -13,6 +13,7 @@ struct ICoreWebView2;
 class WebView2Viewer {
 public:
     using CheckboxCallback = std::function<void(int lineNo)>;
+    using JumpToLineCallback = std::function<void(int lineNo)>;
     using NavigationCallback = std::function<void(const std::wstring& url)>;
     using SyncCallback = std::function<void()>;
     using ThemeCallback = std::function<void()>;
@@ -50,6 +51,7 @@ public:
 
     // Callbacks
     void SetCheckboxCallback(CheckboxCallback cb) { m_checkboxCallback = cb; }
+    void SetJumpToLineCallback(JumpToLineCallback cb) { m_jumpToLineCallback = cb; }
     void SetNavigationCallback(NavigationCallback cb) { m_navCallback = cb; }
     void SetSyncCallback(SyncCallback cb) { m_syncCallback = cb; }
     void SetThemeCallback(ThemeCallback cb) { m_themeCallback = cb; }
@@ -83,6 +85,7 @@ private:
     ICoreWebView2* m_pWebView = nullptr;
 
     CheckboxCallback m_checkboxCallback;
+    JumpToLineCallback m_jumpToLineCallback;
     NavigationCallback m_navCallback;
     SyncCallback m_syncCallback;
     ThemeCallback m_themeCallback;

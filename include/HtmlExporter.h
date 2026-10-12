@@ -38,6 +38,7 @@ public:
     static std::wstring EscapeHtml(const std::wstring& str);
     static std::string EscapeHtmlUtf8(const std::string& str);
     static std::wstring InlinesToHtml(const std::vector<MarkdownSpan>& inlines);
+    static std::wstring InlinesToPlainText(const std::vector<MarkdownSpan>& inlines);
 
 private:
     static std::string GenerateCfHtml(const std::string& htmlFragment);

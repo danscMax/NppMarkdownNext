@@ -21,6 +21,8 @@
 #define SCI_LINESONSCREEN              2370
 #define SCI_GETLINE                    2153
 #define SCI_LINELENGTH                 2350
+#define SCI_GOTOLINE                   2024
+#define SCI_ENSUREVISIBLE              2232
 
 #define SCI_GETBIDIRECTIONAL           2700
 #define SCI_SETBIDIRECTIONAL           2701

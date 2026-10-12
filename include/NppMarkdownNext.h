@@ -73,6 +73,7 @@ private:
     bool m_isPanelVisible = false;
     bool m_isRenderPending = false;
     std::wstring m_lastRawContent;
+    int m_lastScrolledCaretLine = -1;
 };
 
 extern "C" int GetPluginCmdId(int index);

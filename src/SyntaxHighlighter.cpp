@@ -133,7 +133,7 @@ std::vector<HighlightToken> SyntaxHighlighter::Tokenize(const std::wstring& line
         }
 
         // Preprocessor / directive (#include, etc.)
-        if (isCpp && ch == L'#' && i == 0) {
+        if (isCpp && ch == L'#' && tokens.empty()) {
             HighlightToken token;
             token.type = HighlightTokenType::Preprocessor;
             token.start = i;

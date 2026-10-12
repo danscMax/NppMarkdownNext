@@ -1,4 +1,7 @@
 # Build script for NppMarkdownNext Native C++26 Edition
+param(
+    [switch]$TestsOnly
+)
 $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -93,6 +96,11 @@ try {
     }
 } finally {
     Pop-Location
+}
+
+if ($TestsOnly) {
+    Write-Host "`n[SUCCESS] Unit tests completed successfully!" -ForegroundColor Green
+    exit 0
 }
 
 # 3. Build x64 DLL

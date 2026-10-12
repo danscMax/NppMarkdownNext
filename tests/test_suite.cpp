@@ -379,6 +379,179 @@ void TestAdvancedDocument() {
     std::cout << "  -> Advanced Features PASS" << std::endl;
 }
 
+void TestParserEdgeCases() {
+    std::cout << "[TEST] Parser Edge Cases & Bug Fixes..." << std::endl;
+
+    // 1. Currency should NOT be parsed as inline math
+    std::wstring currencyText = L"It costs $50 and the discount is $20 for students.";
+    MarkdownDocument docCurrency = MarkdownParser::Parse(currencyText);
+    assert(docCurrency.blocks.size() == 1);
+    for (const auto& span : docCurrency.blocks[0].inlines) {
+        assert(span.type != InlineStyleType::InlineMath);
+    }
+
+    // 2. Real math with proper non-digit delimiter
+    std::wstring mathText = L"Formula is $x + y = z$ in algebra.";
+    MarkdownDocument docMath = MarkdownParser::Parse(mathText);
+    bool foundMath = false;
+    for (const auto& span : docMath.blocks[0].inlines) {
+        if (span.type == InlineStyleType::InlineMath && span.text == L"x + y = z") {
+            foundMath = true;
+        }
+    }
+    assert(foundMath);
+
+    // 3. snake_case underscores should NOT be parsed as italic
+    std::wstring snakeText = L"Variable my_cool_variable_name is fine.";
+    MarkdownDocument docSnake = MarkdownParser::Parse(snakeText);
+    assert(docSnake.blocks.size() == 1);
+    for (const auto& span : docSnake.blocks[0].inlines) {
+        assert(span.type != InlineStyleType::Italic);
+    }
+
+    // 4. Emphasis requires non-whitespace bounds
+    std::wstring spaceAsterisk = L"This is * not italic * here.";
+    MarkdownDocument docSpace = MarkdownParser::Parse(spaceAsterisk);
+    for (const auto& span : docSpace.blocks[0].inlines) {
+        assert(span.type != InlineStyleType::Italic);
+    }
+
+    // 5. Multi-backtick inline code
+    std::wstring multiBacktick = L"Use `` `inline code` `` inside.";
+    MarkdownDocument docBacktick = MarkdownParser::Parse(multiBacktick);
+    bool foundMultiCode = false;
+    for (const auto& span : docBacktick.blocks[0].inlines) {
+        if (span.type == InlineStyleType::InlineCode && span.text == L"`inline code`") {
+            foundMultiCode = true;
+        }
+    }
+    assert(foundMultiCode);
+
+    // 6. Autolink URL
+    std::wstring urlText = L"Check https://github.com/theneet0/NppMarkdownNext now.";
+    MarkdownDocument docUrl = MarkdownParser::Parse(urlText);
+    bool foundUrl = false;
+    for (const auto& span : docUrl.blocks[0].inlines) {
+        if (span.type == InlineStyleType::Link && span.extra == L"https://github.com/theneet0/NppMarkdownNext") {
+            foundUrl = true;
+        }
+    }
+    assert(foundUrl);
+
+    // 7. Display math block ($$)
+    std::wstring dispMath = L"$$\n\\sum_{i=1}^n i = \\frac{n(n+1)}{2}\n$$";
+    MarkdownDocument docDispMath = MarkdownParser::Parse(dispMath);
+    assert(docDispMath.blocks.size() == 1);
+    assert(docDispMath.blocks[0].type == MarkdownBlockType::CodeBlock);
+    assert(docDispMath.blocks[0].codeLanguage == L"math");
+
+    // 8. Table cell with pipe inside code
+    std::wstring tableMd =
+        L"| Command | Description |\n"
+        L"|---|---|\n"
+        L"| `cat | grep` | Pipe command |\n";
+    MarkdownDocument docTable = MarkdownParser::Parse(tableMd);
+    assert(docTable.blocks.size() == 1);
+    assert(docTable.blocks[0].type == MarkdownBlockType::Table);
+    assert(docTable.blocks[0].table.rows.size() == 2);
+    assert(docTable.blocks[0].table.rows[1].cells.size() == 2);
+    bool foundPipeInCode = false;
+    for (const auto& span : docTable.blocks[0].table.rows[1].cells[0].spans) {
+        if (span.type == InlineStyleType::InlineCode && span.text == L"cat | grep") {
+            foundPipeInCode = true;
+        }
+    }
+    assert(foundPipeInCode);
+
+    // 9. InlinesToPlainText strips markdown tags
+    std::vector<MarkdownSpan> spans = {
+        {InlineStyleType::Normal, L"Hello ", L""},
+        {InlineStyleType::Bold, L"World", L""},
+        {InlineStyleType::Link, L"Click Here", L"https://example.com"}
+    };
+    std::wstring plain = HtmlExporter::InlinesToPlainText(spans);
+    assert(plain == L"Hello WorldClick Here");
+
+    // 10. Preview components have jumpToSource and dblclick listener
+    std::string previewHtml = HtmlExporter::GeneratePreviewHtml(docTable, L"Title", false);
+    assert(previewHtml.find("jumpToSource") != std::string::npos);
+    assert(previewHtml.find("dblclick") != std::string::npos);
+
+    // 11. Mixed currency and math on the exact same line
+    std::wstring mixedText = L"Costs $50, tax is $10, but formula is $x + y = z$ in math.";
+    MarkdownDocument docMixed = MarkdownParser::Parse(mixedText);
+    assert(docMixed.blocks.size() == 1);
+    int mathCount = 0;
+    for (const auto& span : docMixed.blocks[0].inlines) {
+        if (span.type == InlineStyleType::InlineMath) {
+            mathCount++;
+            assert(span.text == L"x + y = z");
+        }
+    }
+    assert(mathCount == 1);
+
+    // 12. Escaped dollar sign inside math
+    std::wstring escapedMathText = L"Expression $x = \\$5$ works.";
+    MarkdownDocument docEscMath = MarkdownParser::Parse(escapedMathText);
+    bool foundEscMath = false;
+    for (const auto& span : docEscMath.blocks[0].inlines) {
+        if (span.type == InlineStyleType::InlineMath && span.text == L"x = \\$5") {
+            foundEscMath = true;
+        }
+    }
+    assert(foundEscMath);
+
+    // 13. Table backslash preservation for LaTeX math
+    std::wstring tableMathMd =
+        L"| Function | Description |\n"
+        L"|---|---|\n"
+        L"| $\\alpha + \\beta$ | Symbols |\n";
+    MarkdownDocument docTableMath = MarkdownParser::Parse(tableMathMd);
+    assert(docTableMath.blocks.size() == 1);
+    assert(docTableMath.blocks[0].type == MarkdownBlockType::Table);
+    bool foundAlphaInTable = false;
+    for (const auto& span : docTableMath.blocks[0].table.rows[1].cells[0].spans) {
+        if (span.type == InlineStyleType::InlineMath && span.text.find(L"\\alpha") != std::wstring::npos) {
+            foundAlphaInTable = true;
+        }
+    }
+    assert(foundAlphaInTable);
+
+    // 14. CommonMark angle autolinks: <https://...>
+    std::wstring angleUrlText = L"Visit <https://github.com/theneet0/NppMarkdownNext> for updates.";
+    MarkdownDocument docAngle = MarkdownParser::Parse(angleUrlText);
+    bool foundAngleUrl = false;
+    for (const auto& span : docAngle.blocks[0].inlines) {
+        if (span.type == InlineStyleType::Link && span.extra == L"https://github.com/theneet0/NppMarkdownNext") {
+            foundAngleUrl = true;
+            assert(span.text == L"https://github.com/theneet0/NppMarkdownNext");
+        }
+    }
+    assert(foundAngleUrl);
+
+    // 15. Empty emphasis delimiters protection
+    std::wstring emptyEmphasisText = L"This is **** and ** not bold.";
+    MarkdownDocument docEmptyEmp = MarkdownParser::Parse(emptyEmphasisText);
+    for (const auto& span : docEmptyEmp.blocks[0].inlines) {
+        if (span.type == InlineStyleType::Bold || span.type == InlineStyleType::BoldItalic) {
+            assert(!span.text.empty());
+        }
+    }
+
+    // 16. Indented preprocessor in C++ syntax highlighter
+    std::wstring indentedCpp = L"    #include <vector>";
+    auto cppTokens = SyntaxHighlighter::Tokenize(indentedCpp, L"cpp");
+    bool foundPreproc = false;
+    for (const auto& tok : cppTokens) {
+        if (tok.type == HighlightTokenType::Preprocessor) {
+            foundPreproc = true;
+        }
+    }
+    assert(foundPreproc);
+
+    std::cout << "  -> Parser Edge Cases PASS" << std::endl;
+}
+
 int main() {
     std::cout << "=== Running NppMarkdownPanel Native C++ Unit Tests ===" << std::endl;
     TestBiDiEngine();
@@ -387,6 +560,7 @@ int main() {
     TestHtmlExporter();
     TestPersianDocument();
     TestAdvancedDocument();
-    std::cout << "\n>>> ALL 6 TEST SUITES PASSED SUCCESSFULLY! <<<" << std::endl;
+    TestParserEdgeCases();
+    std::cout << "\n>>> ALL 7 TEST SUITES PASSED SUCCESSFULLY! <<<" << std::endl;
     return 0;
 }

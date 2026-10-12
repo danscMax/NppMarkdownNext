@@ -130,7 +130,6 @@ bool MarkdownParser::ParseBlockquote(const std::wstring& line, std::wstring& con
 std::vector<std::wstring> MarkdownParser::SplitTableRow(const std::wstring& line) {
     std::vector<std::wstring> cells;
     std::wstring current;
-    bool inPipe = false;
     size_t start = 0;
     while (start < line.size() && (line[start] == L' ' || line[start] == L'\t')) start++;
     if (start < line.size() && line[start] == L'|') start++;
@@ -139,15 +138,29 @@ std::vector<std::wstring> MarkdownParser::SplitTableRow(const std::wstring& line
     while (end > start && (line[end - 1] == L' ' || line[end - 1] == L'\t')) end--;
     if (end > start && line[end - 1] == L'|') end--;
 
+    bool inCode = false;
     for (size_t i = start; i < end; ++i) {
         if (line[i] == L'\\') {
-            if (i + 1 < end) {
-                current.push_back(line[i + 1]);
+            if (i + 1 < end && line[i + 1] == L'|') {
+                current.push_back(L'|');
                 i++;
+                continue;
+            } else if (i + 1 < end && line[i + 1] == L'\\') {
+                current.push_back(L'\\');
+                current.push_back(L'\\');
+                i++;
+                continue;
+            } else {
+                current.push_back(line[i]);
                 continue;
             }
         }
-        if (line[i] == L'|') {
+        if (line[i] == L'`') {
+            inCode = !inCode;
+            current.push_back(L'`');
+            continue;
+        }
+        if (line[i] == L'|' && !inCode) {
             // Trim current
             while (!current.empty() && (current.front() == L' ' || current.front() == L'\t')) current.erase(0, 1);
             while (!current.empty() && (current.back() == L' ' || current.back() == L'\t')) current.pop_back();
@@ -220,16 +233,28 @@ std::vector<MarkdownSpan> MarkdownParser::ParseInlines(const std::wstring& text)
             continue;
         }
 
-        // 2. Inline code: `code`
+        // 2. Inline code: `code` or ``code with ` ``
         if (text[i] == L'`') {
-            size_t end = text.find(L'`', i + 1);
+            size_t btCount = 0;
+            while (i + btCount < text.size() && text[i + btCount] == L'`') btCount++;
+            std::wstring delimiter(btCount, L'`');
+            size_t end = text.find(delimiter, i + btCount);
             if (end != std::wstring::npos) {
                 flushText();
                 MarkdownSpan span;
                 span.type = InlineStyleType::InlineCode;
-                span.text = text.substr(i + 1, end - i - 1);
+                span.text = text.substr(i + btCount, end - (i + btCount));
+                if (span.text.length() >= 2 && span.text.front() == L' ' && span.text.back() == L' ') {
+                    bool allSpaces = true;
+                    for (wchar_t ch : span.text) {
+                        if (ch != L' ') { allSpaces = false; break; }
+                    }
+                    if (!allSpaces) {
+                        span.text = span.text.substr(1, span.text.length() - 2);
+                    }
+                }
                 spans.push_back(span);
-                i = end + 1;
+                i = end + btCount;
                 continue;
             }
         }
@@ -237,43 +262,74 @@ std::vector<MarkdownSpan> MarkdownParser::ParseInlines(const std::wstring& text)
         // 3. Bold / Italic: ***, **, *, ___, __, _
         if (text[i] == L'*' || text[i] == L'_') {
             wchar_t marker = text[i];
+            // Intra-word underscore protection (e.g. foo_bar_baz)
+            if (marker == L'_' && i > 0 && (std::iswalnum(text[i - 1]) || text[i - 1] == L'_')) {
+                currentText.push_back(text[i]);
+                i++;
+                continue;
+            }
+
             size_t count = 0;
             while (i + count < text.size() && text[i + count] == marker) count++;
 
-            if (count == 3) {
-                std::wstring closer(3, marker);
-                size_t end = text.find(closer, i + 3);
-                if (end != std::wstring::npos) {
-                    flushText();
-                    MarkdownSpan span;
-                    span.type = InlineStyleType::BoldItalic;
-                    span.text = text.substr(i + 3, end - i - 3);
-                    spans.push_back(span);
-                    i = end + 3;
-                    continue;
-                }
-            } else if (count == 2) {
-                std::wstring closer(2, marker);
-                size_t end = text.find(closer, i + 2);
-                if (end != std::wstring::npos) {
-                    flushText();
-                    MarkdownSpan span;
-                    span.type = InlineStyleType::Bold;
-                    span.text = text.substr(i + 2, end - i - 2);
-                    spans.push_back(span);
-                    i = end + 2;
-                    continue;
-                }
-            } else if (count == 1) {
-                size_t end = text.find(marker, i + 1);
-                if (end != std::wstring::npos) {
-                    flushText();
-                    MarkdownSpan span;
-                    span.type = InlineStyleType::Italic;
-                    span.text = text.substr(i + 1, end - i - 1);
-                    spans.push_back(span);
-                    i = end + 1;
-                    continue;
+            // Opening delimiter cannot be immediately followed by whitespace
+            bool validOpener = (i + count < text.size()) && (text[i + count] != L' ' && text[i + count] != L'\t');
+
+            if (validOpener) {
+                if (count == 3) {
+                    std::wstring closer(3, marker);
+                    size_t searchPos = i + 3;
+                    while (searchPos < text.size()) {
+                        size_t end = text.find(closer, searchPos);
+                        if (end == std::wstring::npos) break;
+                        if (end > i + 3 && text[end - 1] != L' ' && text[end - 1] != L'\t') {
+                            flushText();
+                            MarkdownSpan span;
+                            span.type = InlineStyleType::BoldItalic;
+                            span.text = text.substr(i + 3, end - (i + 3));
+                            spans.push_back(span);
+                            i = end + 3;
+                            goto next_inline_char;
+                        }
+                        searchPos = end + 1;
+                    }
+                } else if (count == 2) {
+                    std::wstring closer(2, marker);
+                    size_t searchPos = i + 2;
+                    while (searchPos < text.size()) {
+                        size_t end = text.find(closer, searchPos);
+                        if (end == std::wstring::npos) break;
+                        if (end > i + 2 && text[end - 1] != L' ' && text[end - 1] != L'\t') {
+                            if (marker != L'_' || end + 2 == text.size() || !std::iswalnum(text[end + 2])) {
+                                flushText();
+                                MarkdownSpan span;
+                                span.type = InlineStyleType::Bold;
+                                span.text = text.substr(i + 2, end - (i + 2));
+                                spans.push_back(span);
+                                i = end + 2;
+                                goto next_inline_char;
+                            }
+                        }
+                        searchPos = end + 1;
+                    }
+                } else if (count == 1) {
+                    size_t searchPos = i + 1;
+                    while (searchPos < text.size()) {
+                        size_t end = text.find(marker, searchPos);
+                        if (end == std::wstring::npos) break;
+                        if (end > i + 1 && text[end - 1] != L' ' && text[end - 1] != L'\t') {
+                            if (marker != L'_' || end + 1 == text.size() || !std::iswalnum(text[end + 1])) {
+                                flushText();
+                                MarkdownSpan span;
+                                span.type = InlineStyleType::Italic;
+                                span.text = text.substr(i + 1, end - (i + 1));
+                                spans.push_back(span);
+                                i = end + 1;
+                                goto next_inline_char;
+                            }
+                        }
+                        searchPos = end + 1;
+                    }
                 }
             }
         }
@@ -281,7 +337,7 @@ std::vector<MarkdownSpan> MarkdownParser::ParseInlines(const std::wstring& text)
         // 4. Strikethrough: ~~text~~
         if (text[i] == L'~' && i + 1 < text.size() && text[i + 1] == L'~') {
             size_t end = text.find(L"~~", i + 2);
-            if (end != std::wstring::npos) {
+            if (end != std::wstring::npos && end > i + 2) {
                 flushText();
                 MarkdownSpan span;
                 span.type = InlineStyleType::Strikethrough;
@@ -295,7 +351,7 @@ std::vector<MarkdownSpan> MarkdownParser::ParseInlines(const std::wstring& text)
         // 4b. Highlight: ==text==
         if (text[i] == L'=' && i + 1 < text.size() && text[i + 1] == L'=') {
             size_t end = text.find(L"==", i + 2);
-            if (end != std::wstring::npos) {
+            if (end != std::wstring::npos && end > i + 2) {
                 flushText();
                 MarkdownSpan span;
                 span.type = InlineStyleType::Highlight;
@@ -306,10 +362,13 @@ std::vector<MarkdownSpan> MarkdownParser::ParseInlines(const std::wstring& text)
             }
         }
 
-        // 4c. Inline Math: $math$
-        if (text[i] == L'$' && i + 1 < text.size() && text[i + 1] != L'$' && (i == 0 || text[i - 1] != L'\\')) {
+        // 4c. Inline Math: $math$ (excluding currency like $50 and $10)
+        if (text[i] == L'$' && i + 1 < text.size() && text[i + 1] != L'$' && text[i + 1] != L' ' && text[i + 1] != L'\t' && !std::iswdigit(text[i + 1]) && (i == 0 || text[i - 1] != L'\\')) {
             size_t end = text.find(L'$', i + 1);
-            if (end != std::wstring::npos && end > i + 1) {
+            while (end != std::wstring::npos && text[end - 1] == L'\\') {
+                end = text.find(L'$', end + 1);
+            }
+            if (end != std::wstring::npos && end > i + 1 && text[end - 1] != L' ' && text[end - 1] != L'\t' && (end + 1 == text.size() || !std::iswdigit(text[end + 1]))) {
                 flushText();
                 MarkdownSpan span;
                 span.type = InlineStyleType::InlineMath;
@@ -356,9 +415,56 @@ std::vector<MarkdownSpan> MarkdownParser::ParseInlines(const std::wstring& text)
             }
         }
 
+        // 6b. CommonMark Autolink: <https://...> or <http://...> or <mailto:...>
+        if (text[i] == L'<' && i + 1 < text.size()) {
+            if (text.compare(i + 1, 8, L"https://") == 0 ||
+                text.compare(i + 1, 7, L"http://") == 0 ||
+                text.compare(i + 1, 7, L"mailto:") == 0) {
+                size_t closeAngle = text.find(L'>', i + 1);
+                if (closeAngle != std::wstring::npos) {
+                    flushText();
+                    std::wstring url = text.substr(i + 1, closeAngle - (i + 1));
+                    MarkdownSpan span;
+                    span.type = InlineStyleType::Link;
+                    span.text = url;
+                    span.extra = url;
+                    spans.push_back(span);
+                    i = closeAngle + 1;
+                    continue;
+                }
+            }
+        }
+
+        // 7. Bare Autolink: https://... or http://...
+        if ((text.compare(i, 8, L"https://") == 0 || text.compare(i, 7, L"http://") == 0) &&
+            (i == 0 || text[i - 1] == L' ' || text[i - 1] == L'\t' || text[i - 1] == L'(' || text[i - 1] == L'[')) {
+            size_t urlEnd = i;
+            while (urlEnd < text.size() && !std::iswspace(text[urlEnd]) &&
+                   text[urlEnd] != L')' && text[urlEnd] != L']' && text[urlEnd] != L'>' &&
+                   text[urlEnd] != L'\"' && text[urlEnd] != L'\'') {
+                urlEnd++;
+            }
+            while (urlEnd > i && (text[urlEnd - 1] == L'.' || text[urlEnd - 1] == L',' || text[urlEnd - 1] == L';' || text[urlEnd - 1] == L':')) {
+                urlEnd--;
+            }
+            if (urlEnd > i) {
+                flushText();
+                std::wstring url = text.substr(i, urlEnd - i);
+                MarkdownSpan span;
+                span.type = InlineStyleType::Link;
+                span.text = url;
+                span.extra = url;
+                spans.push_back(span);
+                i = urlEnd;
+                continue;
+            }
+        }
+
         // Default character
         currentText.push_back(text[i]);
         i++;
+
+    next_inline_char:;
     }
 
     flushText();
@@ -423,6 +529,52 @@ MarkdownDocument MarkdownParser::Parse(const std::wstring& markdownText) {
             doc.blocks.push_back(block);
             lineIdx++;
             continue;
+        }
+
+        // 1b. Display Math Block: $$
+        if (trimmedStart + 2 <= line.size() && line.substr(trimmedStart, 2) == L"$$") {
+            MarkdownBlock block;
+            block.type = MarkdownBlockType::CodeBlock;
+            block.codeLanguage = L"math";
+            block.sourceLineStart = static_cast<int>(lineIdx);
+            block.isRTL = false;
+
+            // Check if single line: $$formula$$
+            size_t afterFirst = trimmedStart + 2;
+            size_t closingPos = line.find(L"$$", afterFirst);
+            if (closingPos != std::wstring::npos) {
+                std::wstring formula = line.substr(afterFirst, closingPos - afterFirst);
+                while (!formula.empty() && (formula.front() == L' ' || formula.front() == L'\t')) formula.erase(0, 1);
+                while (!formula.empty() && (formula.back() == L' ' || formula.back() == L'\t')) formula.pop_back();
+                block.codeLines.push_back(formula);
+                block.sourceLineEnd = static_cast<int>(lineIdx);
+                doc.blocks.push_back(block);
+                lineIdx++;
+                continue;
+            } else {
+                std::wstring firstLineRest = line.substr(afterFirst);
+                while (!firstLineRest.empty() && (firstLineRest.front() == L' ' || firstLineRest.front() == L'\t')) firstLineRest.erase(0, 1);
+                while (!firstLineRest.empty() && (firstLineRest.back() == L' ' || firstLineRest.back() == L'\t')) firstLineRest.pop_back();
+                if (!firstLineRest.empty()) {
+                    block.codeLines.push_back(firstLineRest);
+                }
+
+                lineIdx++;
+                while (lineIdx < lines.size()) {
+                    const std::wstring& mathLine = lines[lineIdx];
+                    size_t mTrimmed = 0;
+                    while (mTrimmed < mathLine.size() && (mathLine[mTrimmed] == L' ' || mathLine[mTrimmed] == L'\t')) mTrimmed++;
+                    if (mTrimmed + 2 <= mathLine.size() && mathLine.substr(mTrimmed, 2) == L"$$") {
+                        break;
+                    }
+                    block.codeLines.push_back(mathLine);
+                    lineIdx++;
+                }
+                block.sourceLineEnd = static_cast<int>(lineIdx);
+                doc.blocks.push_back(block);
+                lineIdx++;
+                continue;
+            }
         }
 
         // 2. Table: check if current line has pipes and next line is divider
