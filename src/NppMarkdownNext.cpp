@@ -617,7 +617,6 @@ void NppMarkdownNext::ShowAbout() {
 void NppMarkdownNext::RequestRenderDebounced() {
     if (!m_isPanelVisible) return;
     if (!IsCurrentBufferMarkdown()) return;
-    NppLog("RequestRenderDebounced: arming IDT_RENDER_DEBOUNCE");
     SetTimer(m_hPanel, IDT_RENDER_DEBOUNCE, RENDER_DEBOUNCE_DELAY_MS, nullptr);
 }
 
@@ -767,10 +766,6 @@ LRESULT CALLBACK NppMarkdownNext::PanelWndProc(HWND hwnd, UINT msg, WPARAM wPara
 
     if (!self) return DefWindowProc(hwnd, msg, wParam, lParam);
 
-    if (msg != WM_SETCURSOR && msg != WM_NCHITTEST && msg != WM_MOUSEMOVE) {
-        NppLog("PanelWndProc msg=0x%04X, wp=0x%p, lp=0x%p", msg, (void*)wParam, (void*)lParam);
-    }
-
     switch (msg) {
         case WM_SHOWWINDOW: {
             NppLog("PanelWndProc WM_SHOWWINDOW wp=%d", (int)wParam);
@@ -807,7 +802,6 @@ LRESULT CALLBACK NppMarkdownNext::PanelWndProc(HWND hwnd, UINT msg, WPARAM wPara
         case WM_TIMER: {
             if (wParam == IDT_RENDER_DEBOUNCE) {
                 KillTimer(hwnd, IDT_RENDER_DEBOUNCE);
-                NppLog("IDT_RENDER_DEBOUNCE fire");
                 self->ExecuteRender();
                 return 0;
             }
