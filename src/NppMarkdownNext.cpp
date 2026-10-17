@@ -361,7 +361,9 @@ int NppMarkdownNext::GetScintillaFirstVisibleLine(HWND hSci) const {
 
 std::wstring NppMarkdownNext::GetCurrentBufferPath() const {
     wchar_t path[MAX_PATH] = { 0 };
-    SendMessage(m_nppData._nppHandle, NPPM_GETFULLPATHFROMBUFFERID, (WPARAM)-1, (LPARAM)path);
+    // NPPM_GETFULLPATHFROMBUFFERID needs a real buffer id; -1 returned "" and
+    // made every tab look like an unsaved (Markdown) one
+    SendMessage(m_nppData._nppHandle, NPPM_GETFULLCURRENTPATH, MAX_PATH, (LPARAM)path);
     return path;
 }
 
