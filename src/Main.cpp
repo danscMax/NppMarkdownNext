@@ -201,6 +201,7 @@ __declspec(dllexport) void beNotified(SCNotification *notifyCode) {
             break;
 
         case NPPN_BUFFERACTIVATED:
+        case NPPN_FILECLOSED:
             NppMarkdownNext::Instance().OnBufferActivated();
             break;
 

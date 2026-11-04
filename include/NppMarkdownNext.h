@@ -52,7 +52,7 @@ private:
     void SetPanelVisible(bool visible);
     void ApplyAutoShowPanel();
     void RequestRenderDebounced();
-    bool ExecuteRender();
+    bool ExecuteRender(bool force = false);
     bool IsDarkThemeEffective() const;
     std::wstring GetCurrentBufferPath() const;
     bool IsCurrentBufferMarkdown() const;

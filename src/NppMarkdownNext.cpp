@@ -118,9 +118,8 @@ bool NppMarkdownNext::CreatePanelWindow() {
 
     m_webViewViewer.SetPageReadyCallback([this]() {
         NppLog("WebView2 page ready, executing initial render");
-        m_lastRawContentUtf8.clear();
         if (m_isPanelVisible) {
-            ExecuteRender();
+            ExecuteRender(true);
         }
     });
 
@@ -243,14 +242,20 @@ void NppMarkdownNext::SetPanelVisible(bool visible) {
         GetClientRect(m_hPanel, &rc);
         m_webViewViewer.Resize(0, 0, rc.right - rc.left, rc.bottom - rc.top);
         m_webViewViewer.SetVisible(true);
-        m_lastRawContentUtf8.clear();
-        ExecuteRender();
+        ExecuteRender(true);
+    } else {
+        KillTimer(m_hPanel, IDT_RENDER_DEBOUNCE);
+        m_webViewViewer.SetVisible(false);
     }
 }
 
 void NppMarkdownNext::ApplyAutoShowPanel() {
     if (!m_config.autoShowPanel) return;
-    if (GetCurrentBufferPath().find(L'\\') == std::wstring::npos) return;
+    if (GetCurrentBufferPath().find(L'\\') == std::wstring::npos) {
+        HWND hSci = GetCurrentScintilla();
+        if (hSci && SendMessage(hSci, SCI_GETLENGTH, 0, 0) == 0) SetPanelVisible(false);
+        return;
+    }
     bool isMarkdown = IsCurrentBufferMarkdown();
     if (isMarkdown && !m_isPanelVisible && !m_userClosedPanel) {
         SetPanelVisible(true);
@@ -376,21 +381,20 @@ void NppMarkdownNext::RequestRenderDebounced() {
     SetTimer(m_hPanel, IDT_RENDER_DEBOUNCE, RENDER_DEBOUNCE_DELAY_MS, nullptr);
 }
 
-bool NppMarkdownNext::ExecuteRender() {
+bool NppMarkdownNext::ExecuteRender(bool force) {
     HWND hSci = GetCurrentScintilla();
     if (!hSci) return false;
 
     std::string utf8Content = GetScintillaText(hSci);
     int caretLine = m_config.syncWithCaret ? GetScintillaCaretLine(hSci) : -1;
 
-    if (utf8Content == m_lastRawContentUtf8) {
+    // Buffer changes must render even when the new document is empty.
+    if (!force && utf8Content == m_lastRawContentUtf8) {
         if (m_config.syncWithCaret && caretLine >= 0) {
             m_webViewViewer.ScrollToLine(caretLine);
         }
         return true;
     }
-
-    m_lastRawContentUtf8 = utf8Content;
 
     std::wstring currentPath = GetCurrentBufferPath();
     std::wstring docTitle = PathFindFileNameW(currentPath.c_str());
@@ -398,7 +402,9 @@ bool NppMarkdownNext::ExecuteRender() {
 
     bool isDark = IsDarkThemeEffective();
 
-    m_webViewViewer.UpdateMarkdown(utf8Content, docTitle, isDark, m_config.isSmartBiDiEnabled, caretLine);
+    if (m_webViewViewer.UpdateMarkdown(utf8Content, docTitle, isDark, m_config.isSmartBiDiEnabled, caretLine)) {
+        m_lastRawContentUtf8 = utf8Content;
+    }
     return true;
 }
 
@@ -427,8 +433,7 @@ void NppMarkdownNext::OnBufferActivated() {
     if (!m_isNppReady) return;
     ApplyAutoShowPanel();
     if (m_isPanelVisible) {
-        m_lastRawContentUtf8.clear();
-        ExecuteRender();
+        ExecuteRender(true);
     }
 }
 
@@ -460,8 +465,7 @@ LRESULT CALLBACK NppMarkdownNext::PanelWndProc(HWND hwnd, UINT msg, WPARAM wPara
                 GetClientRect(hwnd, &rc);
                 self->m_webViewViewer.Resize(0, 0, rc.right - rc.left, rc.bottom - rc.top);
                 self->m_webViewViewer.SetVisible(true);
-                self->m_lastRawContentUtf8.clear();
-                self->ExecuteRender();
+                self->ExecuteRender(true);
             }
             return 0;
         }
