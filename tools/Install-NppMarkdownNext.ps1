@@ -172,7 +172,8 @@ function Test-InstalledPackage($Package, [string]$Destination) {
 }
 function Write-InstallerBytesAtomically([string]$Path, [byte[]]$Bytes, [Nullable[bool]]$ReplaceExisting=$null, [string]$ExpectedExistingSha256='') {
     Assert-InstallerNoReparse $Path
-    New-Item -ItemType Directory -Path (Split-Path $Path -Parent) -Force | Out-Null
+    $directory = Split-Path $Path -Parent
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
     Assert-InstallerNoReparse $Path
     $temporary = $Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
     try {
@@ -181,8 +182,20 @@ function Write-InstallerBytesAtomically([string]$Path, [byte[]]$Bytes, [Nullable
         Assert-InstallerNoReparse $Path
         $replace = if ($null -eq $ReplaceExisting) { [IO.File]::Exists($Path) } else { [bool]$ReplaceExisting }
         if ($replace) {
-            if ($ExpectedExistingSha256 -and (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ExpectedExistingSha256) { throw 'The original target changed before replacement; unrelated bytes were preserved.' }
-            [IO.File]::Replace($temporary,$Path,[NullString]::Value)
+            for ($attempt = 0; ; $attempt++) {
+                try {
+                    Assert-InstallerContainedPath $Path $directory
+                    Assert-InstallerContainedPath $temporary $directory
+                    if ($ExpectedExistingSha256 -and (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ExpectedExistingSha256) { throw 'The original target changed before replacement; unrelated bytes were preserved.' }
+                    [IO.File]::Replace($temporary,$Path,[NullString]::Value)
+                    break
+                } catch [IO.IOException] {
+                    $failure = $_.Exception
+                    while ($failure.InnerException) { $failure = $failure.InnerException }
+                    if ($attempt -ge 9 -or ($failure.HResult -band 0xffff) -notin @(32,33,1175)) { throw }
+                    Start-Sleep -Milliseconds 50
+                }
+            }
         }
         else { [IO.File]::Move($temporary,$Path) }
     } finally {

@@ -484,7 +484,38 @@ try {
     $message = ''
     try { $null = Install-VerifiedPackage $package $changedExisting.root } catch { $message = $_.Exception.Message }
     Assert-PackageTest ($message -match 'Recovery required' -and [IO.File]::ReadAllText((Join-Path $changedExisting.destination 'NppMarkdownNext.dll')) -eq 'foreign update to the original path') 'Installer_PreCommitFailureDoesNotOverwriteConcurrentUpdate'
-    Write-Output 'PASS: InstallerSafePaths, InstallerRollback, loaded-script elevation integrity, public relative paths, ordinary-user public install/rollback, permission-only elevation, elevated-effect verification, elevated rollback receipts, immutable package selection, immutable rollback selection and bytes, target mutex, original-hash concurrency checks, UnicodeBackupTargetRoundTrips, target scoping, elevation data, first-install recovery, junction guards, foreign-file preservation'
+    foreach ($retryCase in @('release','exhaust','foreign')) {
+        $script:RetryPath = Join-Path $scratch ('replace-retry-' + $retryCase + '.bin')
+        [IO.File]::WriteAllBytes($script:RetryPath,[byte[]]@(7,8,9))
+        $script:RetryLock = [IO.File]::Open($script:RetryPath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+        $script:RetryCase = $retryCase; $script:RetrySleeps = 0; $script:RetryDelayTotal = 0
+        function Start-Sleep([int]$Milliseconds) {
+            $script:RetrySleeps++; $script:RetryDelayTotal += $Milliseconds
+            if ($script:RetryCase -ne 'exhaust') {
+                $script:RetryLock.Dispose(); $script:RetryLock = $null
+                if ($script:RetryCase -eq 'foreign') { [IO.File]::WriteAllBytes($script:RetryPath,[byte[]]@(4,5,6)) }
+            }
+        }
+        try {
+            $retryError = $null
+            try { Write-InstallerBytesAtomically $script:RetryPath ([byte[]]@(1,2,3)) $true (Get-InstallerHash ([byte[]]@(7,8,9))) }
+            catch { $retryError = $_.Exception }
+            $actualBytes = [Convert]::ToBase64String([IO.File]::ReadAllBytes($script:RetryPath))
+            if ($retryCase -eq 'release') {
+                Assert-PackageTest (!$retryError -and $script:RetrySleeps -eq 1 -and $actualBytes -eq 'AQID') 'Installer_AtomicReplaceRetriesUntilReadLockReleases'
+            } elseif ($retryCase -eq 'exhaust') {
+                while ($retryError.InnerException) { $retryError = $retryError.InnerException }
+                Assert-PackageTest ($retryError -and ($retryError.HResult -band 0xffff) -eq 32 -and $script:RetrySleeps -eq 9 -and $actualBytes -eq 'BwgJ') 'Installer_AtomicReplaceBoundedFailurePreservesOriginal'
+            } else {
+                Assert-PackageTest ($retryError -and $retryError.Message -match 'original target changed before replacement' -and $script:RetrySleeps -eq 1 -and $actualBytes -eq 'BAUG') 'Installer_AtomicReplaceRechecksOriginalAfterRetryWait'
+            }
+            Assert-PackageTest ($script:RetryDelayTotal -le 450 -and @(Get-ChildItem -LiteralPath $scratch -Filter ([IO.Path]::GetFileName($script:RetryPath) + '.*.tmp')).Count -eq 0) "Installer_AtomicReplaceRetryBoundAndCleanup $retryCase"
+        } finally {
+            if ($script:RetryLock) { $script:RetryLock.Dispose(); $script:RetryLock = $null }
+            Remove-Item -LiteralPath Function:\Start-Sleep
+        }
+    }
+    Write-Output 'PASS: InstallerSafePaths, InstallerRollback, bounded atomic-replace retries, loaded-script elevation integrity, public relative paths, ordinary-user public install/rollback, permission-only elevation, elevated-effect verification, elevated rollback receipts, immutable package selection, immutable rollback selection and bytes, target mutex, original-hash concurrency checks, UnicodeBackupTargetRoundTrips, target scoping, elevation data, first-install recovery, junction guards, foreign-file preservation'
 } finally {
     foreach ($link in $script:InstallTestJunctions) { Remove-InstallTestJunction $link }
     $resolved = [IO.Path]::GetFullPath($scratch)
