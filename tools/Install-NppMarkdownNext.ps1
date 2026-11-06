@@ -176,6 +176,7 @@ function Write-InstallerBytesAtomically([string]$Path, [byte[]]$Bytes, [Nullable
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
     Assert-InstallerNoReparse $Path
     $temporary = $Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+    $stagedSha256 = Get-InstallerHash $Bytes
     try {
         $stream = [IO.FileStream]::new($temporary,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
         try { $stream.Write($Bytes,0,$Bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
@@ -187,6 +188,7 @@ function Write-InstallerBytesAtomically([string]$Path, [byte[]]$Bytes, [Nullable
                     Assert-InstallerContainedPath $Path $directory
                     Assert-InstallerContainedPath $temporary $directory
                     if ($ExpectedExistingSha256 -and (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ExpectedExistingSha256) { throw 'The original target changed before replacement; unrelated bytes were preserved.' }
+                    if ((Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash.ToLowerInvariant() -cne $stagedSha256) { throw 'The staged installer bytes changed before commit; the target was preserved.' }
                     [IO.File]::Replace($temporary,$Path,[NullString]::Value)
                     break
                 } catch [IO.IOException] {
@@ -197,7 +199,12 @@ function Write-InstallerBytesAtomically([string]$Path, [byte[]]$Bytes, [Nullable
                 }
             }
         }
-        else { [IO.File]::Move($temporary,$Path) }
+        else {
+            Assert-InstallerContainedPath $Path $directory
+            Assert-InstallerContainedPath $temporary $directory
+            if ((Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash.ToLowerInvariant() -cne $stagedSha256) { throw 'The staged installer bytes changed before commit; the target was preserved.' }
+            [IO.File]::Move($temporary,$Path)
+        }
     } finally {
         if (Test-Path -LiteralPath $temporary) { Assert-InstallerNoReparse $temporary; Remove-Item -LiteralPath $temporary -Force }
     }

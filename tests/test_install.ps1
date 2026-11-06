@@ -240,12 +240,15 @@ try {
     $rule = [Security.AccessControl.FileSystemAccessRule]::new($identity,[Security.AccessControl.FileSystemRights]::Write,
         [Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit',[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Deny)
     $deniedAcl.AddAccessRule($rule)
+    $hostHash = (Get-FileHash -LiteralPath $target.executable -Algorithm SHA256).Hash
     try {
         Set-Acl -LiteralPath $target.root -AclObject $deniedAcl
         $message = ''
         try { $null = Invoke-PluginInstaller 'Install' $package $target.root } catch { $message = $_.Exception.Message }
         Assert-PackageTest ($script:ElevationAttempts -eq 1 -and $message -match 'installed files do not match') 'Installer_VerifiesEffectsAfterElevatedExitZero'
-        Assert-PackageTest (!(Test-Path -LiteralPath $target.destination)) 'Installer fake elevation did not mutate protected target'
+        $protectedFiles = @()
+        if (Test-Path -LiteralPath $target.destination) { $protectedFiles = @(Get-ChildItem -LiteralPath $target.destination -Recurse -File -Force) }
+        Assert-PackageTest ($protectedFiles.Count -eq 0 -and (Get-FileHash -LiteralPath $target.executable -Algorithm SHA256).Hash -ceq $hostHash) 'Installer_DeniedElevationPreservesHostAndCreatesNoFiles'
     } finally { Set-Acl -LiteralPath $target.root -AclObject $acl }
 
     $script:RealWriter = ${function:Write-InstallerFile}
@@ -484,7 +487,7 @@ try {
     $message = ''
     try { $null = Install-VerifiedPackage $package $changedExisting.root } catch { $message = $_.Exception.Message }
     Assert-PackageTest ($message -match 'Recovery required' -and [IO.File]::ReadAllText((Join-Path $changedExisting.destination 'NppMarkdownNext.dll')) -eq 'foreign update to the original path') 'Installer_PreCommitFailureDoesNotOverwriteConcurrentUpdate'
-    foreach ($retryCase in @('release','exhaust','foreign')) {
+    foreach ($retryCase in @('release','exhaust','foreign','staged')) {
         $script:RetryPath = Join-Path $scratch ('replace-retry-' + $retryCase + '.bin')
         [IO.File]::WriteAllBytes($script:RetryPath,[byte[]]@(7,8,9))
         $script:RetryLock = [IO.File]::Open($script:RetryPath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
@@ -494,6 +497,11 @@ try {
             if ($script:RetryCase -ne 'exhaust') {
                 $script:RetryLock.Dispose(); $script:RetryLock = $null
                 if ($script:RetryCase -eq 'foreign') { [IO.File]::WriteAllBytes($script:RetryPath,[byte[]]@(4,5,6)) }
+                if ($script:RetryCase -eq 'staged') {
+                    $staged = @(Get-ChildItem -LiteralPath $scratch -Filter ([IO.Path]::GetFileName($script:RetryPath) + '.*.tmp'))
+                    Assert-PackageTest ($staged.Count -eq 1) 'Installer_AtomicReplaceStagedFixtureExistsDuringRetry'
+                    [IO.File]::WriteAllBytes($staged[0].FullName,[byte[]]@(10,11,12))
+                }
             }
         }
         try {
@@ -506,8 +514,10 @@ try {
             } elseif ($retryCase -eq 'exhaust') {
                 while ($retryError.InnerException) { $retryError = $retryError.InnerException }
                 Assert-PackageTest ($retryError -and ($retryError.HResult -band 0xffff) -eq 32 -and $script:RetrySleeps -eq 9 -and $actualBytes -eq 'BwgJ') 'Installer_AtomicReplaceBoundedFailurePreservesOriginal'
-            } else {
+            } elseif ($retryCase -eq 'foreign') {
                 Assert-PackageTest ($retryError -and $retryError.Message -match 'original target changed before replacement' -and $script:RetrySleeps -eq 1 -and $actualBytes -eq 'BAUG') 'Installer_AtomicReplaceRechecksOriginalAfterRetryWait'
+            } else {
+                Assert-PackageTest ($retryError -and $retryError.Message -match 'staged installer bytes changed before commit' -and $script:RetrySleeps -eq 1 -and $actualBytes -eq 'BwgJ') 'Installer_AtomicReplaceRejectsStagedTamperingBeforeCommit'
             }
             Assert-PackageTest ($script:RetryDelayTotal -le 450 -and @(Get-ChildItem -LiteralPath $scratch -Filter ([IO.Path]::GetFileName($script:RetryPath) + '.*.tmp')).Count -eq 0) "Installer_AtomicReplaceRetryBoundAndCleanup $retryCase"
         } finally {
