@@ -107,7 +107,7 @@ async () => {
     }
     const color = selector => getComputedStyle(document.querySelector(selector)).color;
     await render('# Gold roles\n\n**Bold** *Italic* `inline`\n\n> Quote\n\n[link](https://example.com)\n\n```python\n# author comment\n```\n');
-    for (const [selector, expected] of [['h1','rgb(255, 208, 0)'],['strong','rgb(255, 61, 61)'],['em','rgb(255, 130, 63)'],[':not(pre) > code','rgb(161, 103, 255)'],['blockquote','rgb(228, 172, 115)'],['a','rgb(62, 178, 255)'],['.hljs-comment','rgb(51, 73, 132)']]) {
+    for (const [selector, expected] of [['h1','rgb(255, 208, 0)'],['strong','rgb(237, 242, 247)'],['em','rgb(255, 130, 63)'],[':not(pre) > code','rgb(161, 103, 255)'],['blockquote','rgb(228, 172, 115)'],['a','rgb(62, 178, 255)'],['.hljs-comment','rgb(51, 73, 132)']]) {
         expect(color('#content ' + selector) === expected, 'GoldMarkdownRoles ' + selector);
     }
     expect(color('#content') === 'rgb(184, 196, 228)', 'GoldMarkdownRoles body text');

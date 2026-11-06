@@ -31,9 +31,10 @@ def validate_catalog(data):
             raise ValueError('Variant must retain the Bearded enum')
         if index>=13 and 'body.'+theme['id']+' {' not in data['paletteCss']:
             raise ValueError('Theme has no vendored palette: '+theme['id'])
-        for role,color in theme.get('markdown',{}).items():
-            if role not in {'heading','bold','italic','inlineCode','quote','link','comment'} or not re.fullmatch(r'#[0-9a-fA-F]{6}',color):
-                raise ValueError('Invalid Markdown color role')
+        for field in ('markdown','markdownOverrides'):
+            for role,color in theme.get(field,{}).items():
+                if role not in {'heading','bold','italic','inlineCode','quote','link','comment'} or not re.fullmatch(r'#[0-9a-fA-F]{6}',color):
+                    raise ValueError('Invalid Markdown color role')
 
 def cpp_wstring(value):
     return 'L'+json.dumps(value,ensure_ascii=True)
@@ -57,7 +58,7 @@ def generate(data):
     semantic=[]
     selectors={'heading':':is(h1,h2,h3,h4,h5,h6)','bold':'strong','italic':'em','inlineCode':':not(pre) > code','quote':'blockquote','link':'a','comment':'.hljs-comment'}
     for theme in data['themes']:
-        roles=theme.get('markdown',{})
+        roles={**theme.get('markdown',{}),**theme.get('markdownOverrides',{})}
         if not roles:continue
         prefix='body.'+theme['id']
         semantic.append(prefix+' {\n'+''.join('  --reader-'+role+': '+color+';\n' for role,color in roles.items())+'}\n')
@@ -108,7 +109,7 @@ def main():
     if stale:
         print('Generated theme data is stale: '+'; '.join(stale),file=sys.stderr)
         return 1
-    print('Theme catalog verified: 77 choices' if args.check else 'Generated 77 theme choices and exact Gold Markdown roles')
+    print('Theme catalog verified: 77 choices' if args.check else 'Generated 77 theme choices and Gold Markdown roles')
     return 0
 
 if __name__=='__main__':

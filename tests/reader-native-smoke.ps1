@@ -319,7 +319,7 @@ try {
     $state = Invoke-Probe 'inspect' '' (Join-Path $runRoot 'initial-gold.png')
     Assert-Check ($state.settings.Count -eq 11 -and @($state.settings | Where-Object { $_ -eq 'Typography' }).Count -eq 1) 'FullSettingsMenu' 'All eleven root rows including Typography are present.'
     Assert-Check ($state.colors.background -eq 'rgb(15, 22, 40)' -and $state.colors.heading -eq 'rgb(255, 208, 0)' -and
-        $state.colors.strong -eq 'rgb(255, 61, 61)' -and $state.colors.emphasis -eq 'rgb(255, 130, 63)' -and
+        $state.colors.strong -eq 'rgb(237, 242, 247)' -and $state.colors.emphasis -eq 'rgb(255, 130, 63)' -and
         $state.colors.code -eq 'rgb(161, 103, 255)' -and $state.colors.quote -eq 'rgb(228, 172, 115)' -and
         $state.colors.link -eq 'rgb(62, 178, 255)') 'NativeGoldMarkdownRoles'
     $report.states.initial = $state

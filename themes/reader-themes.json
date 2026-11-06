@@ -100,6 +100,9 @@
         "quote": "#e4ac73",
         "link": "#3eb2ff",
         "comment": "#334984"
+      },
+      "markdownOverrides": {
+        "bold": "#edf2f7"
       }
     },
     {

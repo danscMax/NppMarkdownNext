@@ -32,8 +32,15 @@ class ThemeCatalogTests(unittest.TestCase):
         expected={'heading':'#ffd000','bold':'#ff3d3d','italic':'#ff823f','inlineCode':'#a167ff','quote':'#e4ac73','link':'#3eb2ff','comment':'#334984'}
         gold=next(t for t in self.data['themes'] if t['id']=='bearded-v-gold-d-raynh')
         self.assertEqual(gold['markdown'],expected)
-        for role,color in expected.items():
+        self.assertEqual(gold['markdownOverrides'],{'bold':'#edf2f7'})
+        for role,color in {**expected,**gold['markdownOverrides']}.items():
             self.assertIn('--reader-'+role+': '+color+';',palette)
+        invalid=json.loads(json.dumps(self.data))
+        next(t for t in invalid['themes'] if t['id']==gold['id'])['markdownOverrides']['bold']='red; color: red'
+        spec=importlib.util.spec_from_file_location('reader_themes',ROOT/'tools/gen-reader-themes.py')
+        generator=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+        with self.assertRaises(ValueError):generator.validate_catalog(invalid)
 
     def test_OtherPalettesUnchanged(self):
         palette=(ROOT/'src/ThemePalette.inc').read_text(encoding='utf-8')

@@ -3050,7 +3050,7 @@ window.BEARDED_VARIANTS = window.READER_THEME_CATALOG.filter(function(t){return 
 )CATALOG_JS";
 inline constexpr const char* s_readerSemanticCss = R"SEMANTIC_CSS(body.bearded-v-gold-d-raynh {
   --reader-heading: #ffd000;
-  --reader-bold: #ff3d3d;
+  --reader-bold: #edf2f7;
   --reader-italic: #ff823f;
   --reader-inlineCode: #a167ff;
   --reader-quote: #e4ac73;
