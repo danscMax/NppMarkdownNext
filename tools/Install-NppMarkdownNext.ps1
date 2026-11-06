@@ -187,8 +187,8 @@ function Write-InstallerBytesAtomically([string]$Path, [byte[]]$Bytes, [Nullable
                 try {
                     Assert-InstallerContainedPath $Path $directory
                     Assert-InstallerContainedPath $temporary $directory
-                    if ($ExpectedExistingSha256 -and (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ExpectedExistingSha256) { throw 'The original target changed before replacement; unrelated bytes were preserved.' }
                     if ((Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash.ToLowerInvariant() -cne $stagedSha256) { throw 'The staged installer bytes changed before commit; the target was preserved.' }
+                    if ($ExpectedExistingSha256 -and (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ExpectedExistingSha256) { throw 'The original target changed before replacement; unrelated bytes were preserved.' }
                     [IO.File]::Replace($temporary,$Path,[NullString]::Value)
                     break
                 } catch [IO.IOException] {

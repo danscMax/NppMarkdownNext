@@ -525,6 +525,21 @@ try {
             Remove-Item -LiteralPath Function:\Start-Sleep
         }
     }
+    $script:HashRacePath = Join-Path $scratch 'staged-hash-source-race.bin'
+    [IO.File]::WriteAllBytes($script:HashRacePath,[byte[]]@(7,8,9))
+    function Get-FileHash([string]$LiteralPath,[string]$Algorithm) {
+        if ($LiteralPath.StartsWith($script:HashRacePath + '.', [StringComparison]::OrdinalIgnoreCase)) {
+            [IO.File]::WriteAllBytes($script:HashRacePath,[byte[]]@(4,5,6))
+        }
+        Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $LiteralPath -Algorithm $Algorithm
+    }
+    try {
+        $message = ''
+        try { Write-InstallerBytesAtomically $script:HashRacePath ([byte[]]@(1,2,3)) $true (Get-InstallerHash ([byte[]]@(7,8,9))) }
+        catch { $message = $_.Exception.Message }
+        Assert-PackageTest ($message -match 'original target changed before replacement' -and [Convert]::ToBase64String([IO.File]::ReadAllBytes($script:HashRacePath)) -eq 'BAUG') 'Installer_RechecksOriginalAfterHashingStagedBytes'
+        Assert-PackageTest (@(Get-ChildItem -LiteralPath $scratch -Filter 'staged-hash-source-race.bin.*.tmp').Count -eq 0) 'Installer_StagedHashSourceRaceCleansTemporaryFile'
+    } finally { Remove-Item -LiteralPath Function:\Get-FileHash }
     Write-Output 'PASS: InstallerSafePaths, InstallerRollback, bounded atomic-replace retries, loaded-script elevation integrity, public relative paths, ordinary-user public install/rollback, permission-only elevation, elevated-effect verification, elevated rollback receipts, immutable package selection, immutable rollback selection and bytes, target mutex, original-hash concurrency checks, UnicodeBackupTargetRoundTrips, target scoping, elevation data, first-install recovery, junction guards, foreign-file preservation'
 } finally {
     foreach ($link in $script:InstallTestJunctions) { Remove-InstallTestJunction $link }
