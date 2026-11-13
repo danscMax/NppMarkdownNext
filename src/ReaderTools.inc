@@ -260,6 +260,7 @@ function openReaderMenu(x, y, target) {
         button.disabled = !!item.disabled;
         var label = document.createElement('span');
         label.textContent = item.label;
+        label.title = item.label; // readable in full when a narrow panel ellipsizes it
         button.append(label);
         if (item.key) { var key = document.createElement('span'); key.className = 'reader-menu-key'; key.textContent = item.key; button.append(key); }
         button.addEventListener('click', function(event) { event.stopPropagation(); closeReaderMenu(); item.run(); });
