@@ -180,7 +180,7 @@ $converted = Join-Path $runRoot 'after-save.md'
 $inlineCode = [string][char]96 + 'inline' + [char]96
 $nl = [Environment]::NewLine
 $longBody = (@(1..140 | ForEach-Object { "Paragraph $_ for scrolling and source synchronization.$nl" }) -join $nl)
-$document = [string]::Join($nl,@("# $marker",'',"**Bold** and *italic* with $inlineCode and [a link](https://example.invalid/smoke).",'','> A quote.','','- [x] literal [ ]','','![dot](img/dot.png)','','## Reading section','',$longBody))
+$document = [string]::Join($nl,@("# $marker",'',"**Bold** and *italic* with $inlineCode and [a link](https://example.invalid/smoke).",'','> A quote.','','- [x] literal [ ]','','![dot](img/dot.png)','','| Col A | Col B |','|---|---|','| 1 | 2 |','','## Reading section','',$longBody))
 # A 1x1 PNG next to the document: the reader must load it through the document-folder virtual host.
 New-Item -ItemType Directory -Path (Join-Path $runRoot 'img') -Force | Out-Null
 [IO.File]::WriteAllBytes((Join-Path $runRoot 'img\dot.png'), [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))
@@ -407,10 +407,19 @@ try {
         [IO.File]::ReadAllText($ini) -match '(?m)^Theme=12\r?$'
     } 'NativeGoldPaletteRestored'
     Assert-Restored $state 'GoldRestoredBeforeCrashes'
+    # Column widths: the reader sends them, the host writes them to its own file...
+    $tablesIni = Join-Path $config 'NppMarkdownNext.tables.ini'
+    $fingerprint = (Invoke-Probe 'evaluate' '(()=>{const t=document.querySelector("#content table");const fp=tableFingerprint(t,{});window.chrome.webview.postMessage("tableWidths:"+window.readerDocumentIndex.bufferId+":"+fp+":111,222");return fp;})()').value
+    $watch.Restart()
+    while (!((Test-Path -LiteralPath $tablesIni) -and [IO.File]::ReadAllText($tablesIni).Contains("=$($fingerprint):111,222")) -and $watch.Elapsed.TotalSeconds -lt 10) { Start-Sleep -Milliseconds 100 }
+    Assert-Check ((Test-Path -LiteralPath $tablesIni) -and [IO.File]::ReadAllText($tablesIni).Contains("=$($fingerprint):111,222")) 'TableWidthsWrittenToFile' ([string]$fingerprint)
     $oldTarget = $state.targetId
     Invoke-Probe 'crash-renderer' | Out-Null
     $state = Wait-State {param($s) $s.targetId -ne $oldTarget -and $s.state -eq 'ready' -and $s.text.Contains($marker)} 'RendererRecovery'
     Assert-Restored $state 'RendererRecovery'
+    # ...and a fresh page (no reader state left) gets them back from the host.
+    $width = Invoke-Probe 'evaluate' '(async()=>{for(let i=0;i<50;i++){const t=document.querySelector("#content table");if(t&&t.rows[0].cells[1].style.width)return t.rows[0].cells[1].style.width;await new Promise(r=>setTimeout(r,100));}return "none";})()'
+    Assert-Check ($width.value -eq '222px') 'TableWidthsRestoredAfterReload' ([string]$width.value)
     $report.states.rendererRecovery = $state
 
     Invoke-Probe 'crash-renderer' | Out-Null
@@ -440,6 +449,11 @@ try {
     $state = Wait-State {param($s) $s.targetId -ne $oldTarget -and $s.state -eq 'ready' -and $s.text.Contains($marker)} 'BrowserRecovery'
     Assert-Restored $state 'BrowserRecovery'
     $report.states.final = Invoke-Probe 'inspect' '' (Join-Path $runRoot 'final-gold.png')
+    # Last, because the print preview stays open until the instance closes.
+    Invoke-Probe 'evaluate' 'window.chrome.webview.postMessage("print")' | Out-Null
+    Start-Sleep -Milliseconds 1200
+    $toast = Invoke-Probe 'evaluate' 'document.getElementById("toast-msg").textContent'
+    Assert-Check (!([string]$toast.value).Contains('newer')) 'NativePrintDialogOpens' ([string]$toast.value)
     $report.passed = $true
 } catch {
     $failure = $_
