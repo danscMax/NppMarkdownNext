@@ -163,10 +163,19 @@ async () => {
     warning.querySelector('.reader-warning-close').click();
     expect(warning.hidden, 'Warnings can be dismissed');
 
+    // Shortcuts follow the typed letter, and the physical key only where the layout types no Latin letter
+    expect(shortcutLetter({key: 'а', code: 'KeyF'}, 'f') && shortcutLetter({key: 'f', code: 'KeyY'}, 'f') && !shortcutLetter({key: 'u', code: 'KeyF'}, 'f') && !shortcutLetter({key: 'l', code: 'KeyP'}, 'p'), 'Ctrl+F/Ctrl+P work on Russian, Dvorak and AZERTY layouts');
+    // At most the 60 most recently resized tables of a document are sent to the host
+    window.__messages.length = 0;
+    for (let i = 0; i < 70; i++) readerColumnWidths.set('77|' + ('0000000' + i.toString(16)).slice(-8), [100, 100]);
+    persistTableWidths('77|00000000');
+    const sentWidths = window.__messages.find(message => message.startsWith('tableWidths:77:')).split(':').slice(2).join(':').split(';');
+    expect(sentWidths.length === 60 && sentWidths[0].startsWith('0000000a:') && sentWidths[59].startsWith('00000045:'), 'Width lists are capped to the most recent tables');
+    Array.from(readerColumnWidths.keys()).forEach(key => { if (key.startsWith('77|')) readerColumnWidths.delete(key); });
     // Relative images resolve inside the document's folder only
     const base = 'https://npp-reader-document.local/';
     expect(documentRelativeUrl('img/a b.png', base) === base + 'img/a%20b.png' && documentRelativeUrl('./x/../y.png', base) === base + 'y.png', 'Relative image paths map into the document folder');
-    expect(['..%2f..%2fx.png', 'a%5Cb.png', 'x/%2e%2e/y.png'].every(src => documentRelativeUrl(src, base) === null), 'Encoded separators and dot segments cannot climb out of the folder');
+    expect(['..%2f..%2fx.png', 'a%5Cb.png', 'x/%2e%2e/y.png', '..%20/x.png', '.../x.png', 'x.png:stream', 'dir./x.png'].every(src => documentRelativeUrl(src, base) === null), 'Encoded separators and dot segments cannot climb out of the folder');
     expect(['../up.png', '/root.png', 'C:\\x.png', 'https://e.com/a.png', 'data:image/png;base64,AA', '//host/a.png', ''].every(src => documentRelativeUrl(src, base) === null) && documentRelativeUrl('a.png', '') === null, 'Absolute, external and escaping paths are left alone');
     window.__emit({type:'notice', text:'Native notice'});
     expect(document.getElementById('toast-msg').textContent === 'Native notice', 'Host notices appear as toasts');

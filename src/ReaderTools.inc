@@ -206,10 +206,16 @@ function findInPreview() {
     if (!postToHost(selection && selection.indexOf('\n') < 0 ? 'find:' + selection : 'find')) showToast('Find is available in the preview panel');
 }
 function printPreview() { closeReaderMenu(); if (!postToHost('print')) window.print(); }
+// Ctrl+<letter> as the user means it: the typed letter on Latin layouts (Dvorak, AZERTY move keys), and the
+// physical key where the layout types no Latin letter (Russian: Ctrl+А is the F key).
+function shortcutLetter(event, letter) {
+    var key = String(event.key || '').toLowerCase();
+    return key === letter || (!/^[a-z]$/.test(key) && event.code === 'Key' + letter.toUpperCase());
+}
 document.addEventListener('keydown', function(event) {
-    // event.code is the physical key, so the shortcuts also work on a Russian (or any other) layout
-    if (event.ctrlKey && !event.altKey && !event.shiftKey && event.code === 'KeyF') { event.preventDefault(); findInPreview(); }
-    else if (event.ctrlKey && !event.altKey && !event.shiftKey && event.code === 'KeyP') { event.preventDefault(); printPreview(); }
+    if (!event.ctrlKey || event.altKey || event.shiftKey) return;
+    if (shortcutLetter(event, 'f')) { event.preventDefault(); findInPreview(); }
+    else if (shortcutLetter(event, 'p')) { event.preventDefault(); printPreview(); }
 });
 
 // ---- Context menu ----------------------------------------------------------------------------------------
@@ -291,8 +297,6 @@ document.addEventListener('scroll', closeReaderMenu, {passive: true, capture: tr
 var readerColumnWidths = new Map();
 // Scroll offsets inside overflowing tables, same keys; kept for the session so an edit does not reset them.
 var readerTableScroll = new Map();
-// Keys of the tables in the document on screen: only these are persisted.
-var readerLaidOutTables = new Set();
 var readerTableObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(markOverflowingTables) : null;
 
 function markOverflowingTables() {
@@ -324,6 +328,7 @@ function startColumnResize(event, table, key, column) {
         grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', end); grip.removeEventListener('pointercancel', end);
         grip.classList.remove('active');
         document.body.classList.remove('reader-col-resizing');
+        readerColumnWidths.delete(key); // re-insert: the most recently resized table goes last
         readerColumnWidths.set(key, widths.slice());
         persistTableWidths(key);
         markOverflowingTables();
@@ -346,10 +351,13 @@ function persistTableWidths(key) {
     if (!/^\d+$/.test(bufferId)) return;
     var entries = [];
     readerColumnWidths.forEach(function(widths, k) {
-        // widths of tables no longer in the document (e.g. an edited header) are dropped instead of piling up
-        if (k.indexOf(bufferId + '|') === 0 && readerLaidOutTables.has(k)) entries.push(k.slice(bufferId.length + 1) + ':' + widths.join(','));
+        if (k.indexOf(bufferId + '|') === 0) entries.push(k.slice(bufferId.length + 1) + ':' + widths.join(','));
     });
-    postToHost('tableWidths:' + bufferId + ':' + entries.join(';'));
+    // Oldest first (a resize moves its table to the end): keep the most recently resized tables when a document
+    // collects more than the host stores. A table whose header is being edited keeps its widths meanwhile.
+    var value = entries.slice(-60).join(';');
+    while (value.length > 4096) value = value.indexOf(';') < 0 ? '' : value.slice(value.indexOf(';') + 1);
+    postToHost('tableWidths:' + bufferId + ':' + value);
 }
 function receiveTableWidths(bufferId, value) {
     if (!/^\d+$/.test(bufferId) || !/^[0-9a-f:,;]*$/.test(value)) return;
@@ -365,13 +373,11 @@ function layoutReaderTables(detail) {
     if (!content) return;
     var bufferId = detail && detail.bufferId || '';
     var seen = Object.create(null), restore = [];
-    readerLaidOutTables = new Set();
     Array.from(content.querySelectorAll('table')).filter(function(table) {
         return table.id !== 'hrdftrtbl' && !table.parentElement.closest('table') && table.rows.length;
     }).forEach(function(table) {
         var cells = Array.from(table.rows[0].cells);
         var key = bufferId + '|' + tableFingerprint(table, seen);
-        readerLaidOutTables.add(key);
         var wrap = table.parentElement;
         if (!wrap.classList.contains('reader-table-wrap')) {
             wrap = document.createElement('div');
@@ -417,7 +423,8 @@ function documentRelativeUrl(src, base) {
         if (segment === '..') { if (!parts.length) return null; parts.pop(); continue; }
         var decoded = segment;
         try { decoded = decodeURIComponent(segment); } catch (e) {}
-        if (/[\\/]/.test(decoded) || decoded === '..' || decoded === '.') return null; // an encoded separator must not climb
+        // an encoded separator, a stream name or a dot/space-trimmed ".." (Windows drops trailing dots and spaces) must not climb
+        if (/[\\/:\0]/.test(decoded) || /^\.+\s*$/.test(decoded) || /[. ]$/.test(decoded)) return null;
         parts.push(decoded);
     }
     if (!parts.length) return null;

@@ -75,9 +75,10 @@ std::wstring TableWidthsKey(std::wstring path) {
     return key;
 }
 
-// \\server\share prefix of a UNC path, lower-cased; empty for anything else.
+// \\server\share prefix of a plain UNC path, lower-cased; empty for anything else, including the \\?\ and \\.\
+// device forms (never treated as "the same share": \\?\UNC\<any host> would otherwise all compare equal).
 std::wstring UncShare(const std::wstring& path) {
-    if (!PathIsUNCW(path.c_str())) return L"";
+    if (path.starts_with(L"\\\\?\\") || path.starts_with(L"\\\\.\\") || !PathIsUNCW(path.c_str())) return L"";
     const size_t server = path.find(L'\\', 2);
     if (server == std::wstring::npos) return L"";
     std::wstring share = path.substr(0, path.find(L'\\', server + 1));
@@ -879,7 +880,8 @@ void NppMarkdownNext::SaveTableWidths(const std::wstring& message) {
         message.find_first_not_of(L"0123456789") != colon || m_tableWidthsPath.empty()) return;
     const std::wstring value = message.substr(colon + 1);
     if (!IsTableWidthsValue(value)) {
-        m_webViewViewer.PostNotice(L"Too many resized columns to remember for this document; double-click a column edge to reset some.");
+        // the reader trims its list to fit, so only a malformed message lands here: nothing to tell the user
+        NppLog("SaveTableWidths: rejected a malformed value (%u chars)", static_cast<unsigned>(value.size()));
         return;
     }
     const auto bufferId = static_cast<WPARAM>(std::wcstoull(message.substr(0, colon).c_str(), nullptr, 10));
@@ -951,8 +953,18 @@ void NppMarkdownNext::OpenLink(const std::wstring& href) {
     // Touching \\server\... makes Windows authenticate to that server (NTLM): a link in someone else's Markdown
     // must not reach an arbitrary host. Allowed only within the share the document itself was opened from.
     // Any "\\" prefix counts: \\server\share, \\?\UNC\..., \\.\device.
+    // shortcut: the check is textual, so a local junction/symlink that points at a share is still followed;
+    // that needs a link planted in the user's own folder; resolve reparse points first if that ever matters.
     if (full.starts_with(L"\\\\") && !IsOnSameShare(full, GetCurrentBufferPath())) {
         m_webViewViewer.PostNotice(L"Links to network locations are not opened from the preview: " + full);
+        return;
+    }
+    std::wstring extension = PathFindExtensionW(full.c_str());
+    CharLowerBuffW(extension.data(), static_cast<DWORD>(extension.size()));
+    // Shell links redirect to anything (a program, a share): never followed from a document.
+    static constexpr const wchar_t* kShellLinks[] = {L".lnk", L".url", L".pif", L".scf", L".library-ms", L".searchconnector-ms"};
+    if (std::any_of(std::begin(kShellLinks), std::end(kShellLinks), [&](const wchar_t* known) { return extension == known; })) {
+        m_webViewViewer.PostNotice(L"Shortcut files are not opened from the preview: " + full);
         return;
     }
     const DWORD attributes = GetFileAttributesW(full.c_str());
@@ -964,9 +976,9 @@ void NppMarkdownNext::OpenLink(const std::wstring& href) {
         ShellExecuteW(nullptr, L"explore", full.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         return;
     }
-    std::wstring extension = PathFindExtensionW(full.c_str());
-    CharLowerBuffW(extension.data(), static_cast<DWORD>(extension.size()));
     // No .svg (a browser would run its script) and no macro-capable legacy Office formats: those open as text.
+    // The rest is the usual trade-off of a document link (as in a browser): PDF/OOXML open in their own viewers,
+    // which apply their own protections (they can still fetch remote content they reference).
     static constexpr const wchar_t* kDefaultApp[] = {L".pdf", L".png", L".jpg", L".jpeg", L".gif", L".bmp", L".webp",
         L".docx", L".xlsx", L".pptx", L".odt", L".ods", L".odp"};
     if (std::any_of(std::begin(kDefaultApp), std::end(kDefaultApp), [&](const wchar_t* known) { return extension == known; }))
@@ -1169,7 +1181,9 @@ LRESULT CALLBACK NppMarkdownNext::PanelWndProc(HWND hwnd, UINT msg, WPARAM wPara
             }
             if (wParam == IDT_VIEWER_LOADING) {
                 KillTimer(hwnd, IDT_VIEWER_LOADING);
-                if (!self->m_shuttingDown && self->m_viewerStatusVisible && !self->m_webViewViewer.IsPageReady())
+                // still the loading status (Retry disabled): an error shown meanwhile keeps its own text
+                if (!self->m_shuttingDown && self->m_viewerStatusVisible && !self->m_webViewViewer.IsPageReady() &&
+                    !IsWindowEnabled(self->m_hRetryViewer))
                     self->SetViewerStatus(L"The preview is taking longer than usual to start. Click Retry to restart it.", true);
                 return 0;
             }

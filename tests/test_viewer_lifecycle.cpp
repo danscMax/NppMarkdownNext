@@ -456,6 +456,23 @@ struct ReaderLifecycleTestPeer {
         fixture.host.OnSettingsMessage(L"openLink:ms-settings:privacy");
         fixture.host.OnSettingsMessage(L"openLink:missing.md");
         assert(fixture.editor.lastOpened.empty() && fixture.Count(L"not opened from the preview: ms-settings") == 1 && fixture.Count(L"was not found") == 1);
+        // .svg opens as text; shell links are refused before anything is touched
+        const std::wstring svg = folder + L"\\pic.svg", shortcut = folder + L"\\run.lnk";
+        for (const auto& name : {svg, shortcut}) { HANDLE created = CreateFileW(name.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, 0, nullptr); assert(created != INVALID_HANDLE_VALUE); CloseHandle(created); }
+        fixture.host.OnSettingsMessage(L"openLink:pic.svg");
+        assert(fixture.editor.lastOpened == svg);
+        fixture.editor.lastOpened.clear();
+        fixture.host.OnSettingsMessage(L"openLink:run.lnk");
+        assert(fixture.editor.lastOpened.empty() && fixture.Count(L"Shortcut files are not opened") == 1);
+        // a document on a share does not make every \\?\UNC\ or //host link "the same share"
+        fixture.messages.clear();
+        fixture.editor.path = L"\\\\server\\share\\doc.md";
+        fixture.host.OnSettingsMessage(L"openLink:\\\\?\\UNC\\evil\\share\\x.md");
+        fixture.host.OnSettingsMessage(L"openLink://evil/share/x.md");
+        fixture.host.OnSettingsMessage(L"openLink:\\\\.\\pipe\\x");
+        assert(fixture.editor.lastOpened.empty() && fixture.Count(L"network locations") == 3);
+        DeleteFileW(svg.c_str());
+        DeleteFileW(shortcut.c_str());
         DeleteFileW(plan.c_str());
     }
 
@@ -470,6 +487,8 @@ struct ReaderLifecycleTestPeer {
         fixture.host.OnSettingsMessage(L"tableWidths:999:0a1b2c3d:1");
         assert(fixture.host.LoadTableWidths(fixture.editor.path) == L"0a1b2c3d:120,200");
         assert(fixture.host.LoadTableWidths(L"C:\\READER-TEST\\ONE.MD") == L"0a1b2c3d:120,200");
+        fixture.host.m_tableWidthsCache.clear(); // a restarted Notepad++ has only the file
+        assert(fixture.host.LoadTableWidths(fixture.editor.path) == L"0a1b2c3d:120,200");
         fixture.messages.clear();
         fixture.host.OnBufferActivated();
         fixture.Tick();
