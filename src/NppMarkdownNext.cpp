@@ -75,6 +75,20 @@ std::wstring TableWidthsKey(std::wstring path) {
     return key;
 }
 
+// \\server\share prefix of a UNC path, lower-cased; empty for anything else.
+std::wstring UncShare(const std::wstring& path) {
+    if (!PathIsUNCW(path.c_str())) return L"";
+    const size_t server = path.find(L'\\', 2);
+    if (server == std::wstring::npos) return L"";
+    std::wstring share = path.substr(0, path.find(L'\\', server + 1));
+    CharLowerBuffW(share.data(), static_cast<DWORD>(share.size()));
+    return share;
+}
+bool IsOnSameShare(const std::wstring& target, const std::wstring& document) {
+    const std::wstring share = UncShare(target);
+    return !share.empty() && share == UncShare(document);
+}
+
 // The reader's wire format "fp:w,w;fp:w" (see persistTableWidths): only these characters, bounded size.
 bool IsTableWidthsValue(const std::wstring& value) {
     return value.size() <= 4096 && value.find_first_not_of(L"0123456789abcdef:,;") == std::wstring::npos;
@@ -926,6 +940,12 @@ void NppMarkdownNext::OpenLink(const std::wstring& href) {
     const DWORD fullLength = GetFullPathNameW(target.c_str(), static_cast<DWORD>(full.size()), full.data(), nullptr);
     if (!fullLength || fullLength >= full.size()) return;
     full.resize(fullLength);
+    // Touching \\server\... makes Windows authenticate to that server (NTLM): a link in someone else's Markdown
+    // must not reach an arbitrary host. Allowed only within the share the document itself was opened from.
+    if (PathIsUNCW(full.c_str()) && !IsOnSameShare(full, GetCurrentBufferPath())) {
+        m_webViewViewer.PostNotice(L"Links to network locations are not opened from the preview: " + full);
+        return;
+    }
     const DWORD attributes = GetFileAttributesW(full.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES) {
         m_webViewViewer.PostNotice(L"The linked file was not found: " + full);

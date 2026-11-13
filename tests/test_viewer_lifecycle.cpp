@@ -19,6 +19,7 @@ struct ReaderLifecycleTestPeer {
         std::wstring configRoot;
         UINT_PTR bufferId = 42;
         UINT codePage = SC_CP_UTF8;
+        std::wstring lastOpened;
         bool readOnly = false;
         size_t selectionStart = 0;
         size_t selectionEnd = 0;
@@ -57,6 +58,7 @@ struct ReaderLifecycleTestPeer {
                 return TRUE;
             }
             case NPPM_GETCURRENTBUFFERID: return editor->bufferId;
+            case NPPM_DOOPEN: editor->lastOpened = reinterpret_cast<const wchar_t*>(lParam); return TRUE;
             case NPPM_GETFULLPATHFROMBUFFERID:
                 if (wParam != editor->bufferId) return -1;
                 if (lParam) wcscpy_s(reinterpret_cast<wchar_t*>(lParam), editor->path.size() + 1, editor->path.c_str());
@@ -436,6 +438,27 @@ struct ReaderLifecycleTestPeer {
         assert(fixture.Count(L"\"docBase\":\"https://npp-reader-document.local/\"") == 0); // no webview in the test: no mapping
     }
 
+    static void LinksOpenOnlySafeTargets() {
+        Fixture fixture;
+        fixture.Ready();
+        const std::wstring folder = fixture.editor.configRoot, plan = folder + L"\\plan.md";
+        HANDLE file = CreateFileW(plan.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        assert(file != INVALID_HANDLE_VALUE);
+        CloseHandle(file);
+        fixture.editor.path = folder + L"\\doc.md";
+        fixture.host.OnSettingsMessage(L"openLink:plan.md#section");
+        assert(fixture.editor.lastOpened == plan);
+        fixture.editor.lastOpened.clear();
+        fixture.messages.clear();
+        fixture.host.OnSettingsMessage(L"openLink:\\\\attacker.example\\share\\x.md");
+        fixture.host.OnSettingsMessage(L"openLink:file://attacker.example/share/x.md");
+        assert(fixture.editor.lastOpened.empty() && fixture.Count(L"network locations") == 2);
+        fixture.host.OnSettingsMessage(L"openLink:ms-settings:privacy");
+        fixture.host.OnSettingsMessage(L"openLink:missing.md");
+        assert(fixture.editor.lastOpened.empty() && fixture.Count(L"not opened from the preview: ms-settings") == 1 && fixture.Count(L"was not found") == 1);
+        DeleteFileW(plan.c_str());
+    }
+
     static void TableWidthsPersistPerDocument() {
         Fixture fixture;
         fixture.host.SetPanelVisible(true);
@@ -668,6 +691,7 @@ int main(int argc, char** argv) {
         {"SaveAsAndRenamePolicy", Peer::SaveAsAndRenamePolicy},
         {"SettingsWarningLifecycle", Peer::SettingsWarningLifecycle},
         {"TableWidthsPersistPerDocument", Peer::TableWidthsPersistPerDocument},
+        {"LinksOpenOnlySafeTargets", Peer::LinksOpenOnlySafeTargets},
         {"EditorIntegrationDetails", Peer::EditorIntegrationDetails},
         {"TypedOperationResultsAndRequests", Peer::TypedOperationResultsAndRequests},
         {"ExportWarningsReachNativeUi", Peer::ExportWarningsReachNativeUi},
