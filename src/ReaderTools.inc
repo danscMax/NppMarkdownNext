@@ -67,6 +67,9 @@ body.toc-open #toc-fab { right: 332px; }
 .reader-menu-item:hover:not(:disabled) { background: rgba(128, 128, 128, 0.16); }
 .reader-menu-item:disabled { opacity: 0.45; cursor: default; }
 .reader-menu-key { margin-inline-start: auto; color: var(--text-secondary); font-size: 12px; }
+.reader-menu-item > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* a narrow docked panel: the labels get the room, the shortcut hints go */
+@media (max-width: 300px) { #reader-menu { min-width: 0; } .reader-menu-key { display: none; } }
 .reader-menu-sep { height: 1px; margin: 4px 6px; background: var(--border-color); }
 
 /* Warnings stay readable and can be dismissed (the layer itself lets clicks through to the page) */
@@ -425,7 +428,7 @@ function documentRelativeUrl(src, base) {
         try { decoded = decodeURIComponent(segment); } catch (e) {}
         // an encoded separator, a stream name, a device name or a dot/space-trimmed ".." (Windows drops trailing
         // dots and spaces) must not climb or reach a device
-        if (/[\\/:\0]/.test(decoded) || /[. ]$/.test(decoded) || /^(?:con|prn|aux|nul|com\d|lpt\d)(?:\.|$)/i.test(decoded)) return null;
+        if (/[\\/:\0]/.test(decoded) || /[. ]$/.test(decoded) || /^(?:con|prn|aux|nul|conin\$|conout\$|com[\d¹²³]|lpt[\d¹²³])(?:\.|$)/i.test(decoded)) return null;
         parts.push(decoded);
     }
     if (!parts.length) return null;
