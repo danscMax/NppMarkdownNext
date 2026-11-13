@@ -439,7 +439,13 @@ function resolveDocumentImages(detail) {
     var base = detail && detail.docBase || '';
     document.querySelectorAll('#content img[src]').forEach(function(image) {
         var url = documentRelativeUrl(image.getAttribute('src'), base);
-        if (url) image.src = url;
+        if (!url) return;
+        // The host maps the folder just before the first render; a request that races the mapping fails once.
+        // One delayed retry covers that without looping on a file that is really missing.
+        image.addEventListener('error', function() {
+            setTimeout(function() { if (image.isConnected) { image.removeAttribute('src'); image.src = url; } }, 400);
+        }, {once: true});
+        image.src = url;
     });
 }
 
