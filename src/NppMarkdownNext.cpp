@@ -956,7 +956,7 @@ void NppMarkdownNext::OpenLink(const std::wstring& href) {
     // shortcut: the check is textual, so a local junction/symlink that points at a share is still followed;
     // that needs a link planted in the user's own folder; resolve reparse points first if that ever matters.
     if (full.starts_with(L"\\\\") && !IsOnSameShare(full, GetCurrentBufferPath())) {
-        m_webViewViewer.PostNotice(L"Links to network locations are not opened from the preview: " + full);
+        m_webViewViewer.PostNotice(L"Links to network locations and device paths are not opened from the preview: " + full);
         return;
     }
     std::wstring extension = PathFindExtensionW(full.c_str());

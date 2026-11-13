@@ -423,8 +423,9 @@ function documentRelativeUrl(src, base) {
         if (segment === '..') { if (!parts.length) return null; parts.pop(); continue; }
         var decoded = segment;
         try { decoded = decodeURIComponent(segment); } catch (e) {}
-        // an encoded separator, a stream name or a dot/space-trimmed ".." (Windows drops trailing dots and spaces) must not climb
-        if (/[\\/:\0]/.test(decoded) || /^\.+\s*$/.test(decoded) || /[. ]$/.test(decoded)) return null;
+        // an encoded separator, a stream name, a device name or a dot/space-trimmed ".." (Windows drops trailing
+        // dots and spaces) must not climb or reach a device
+        if (/[\\/:\0]/.test(decoded) || /[. ]$/.test(decoded) || /^(?:con|prn|aux|nul|com\d|lpt\d)(?:\.|$)/i.test(decoded)) return null;
         parts.push(decoded);
     }
     if (!parts.length) return null;
