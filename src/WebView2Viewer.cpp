@@ -277,6 +277,7 @@ void WebView2Viewer::Close() {
     m_lifetime.reset();
     m_pendingRender = {};
     m_renderedBufferId.clear();
+    m_documentFolder.clear(); // the mapping belongs to the closed webview
     ++m_renderSequence;
     if (m_pWebView) {
         m_pWebView->Release();
@@ -583,6 +584,80 @@ void WebView2Viewer::SetBiDi(bool isBiDi) {
     PostJson(L"{\"type\":\"setBiDi\",\"isBiDi\":" + std::wstring(isBiDi ? L"true" : L"false") + L"}");
 }
 
+namespace {
+class FindStartedHandler : public ICoreWebView2FindStartCompletedHandler {
+    LONG m_ref = 1;
+public:
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** object) override {
+        if (!object) return E_POINTER;
+        *object = nullptr;
+        if (riid != IID_IUnknown && riid != IID_ICoreWebView2FindStartCompletedHandler) return E_NOINTERFACE;
+        *object = static_cast<ICoreWebView2FindStartCompletedHandler*>(this);
+        AddRef();
+        return S_OK;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&m_ref); }
+    ULONG STDMETHODCALLTYPE Release() override { ULONG ref = InterlockedDecrement(&m_ref); if (!ref) delete this; return ref; }
+    HRESULT STDMETHODCALLTYPE Invoke(HRESULT errorCode) override {
+        if (FAILED(errorCode)) NppLog("Find start failed hr=0x%08X", (unsigned)errorCode);
+        return S_OK;
+    }
+};
+
+template <class T> void ReleaseCom(T*& pointer) { if (pointer) { pointer->Release(); pointer = nullptr; } }
+
+constexpr const wchar_t* kDocumentHost = L"npp-reader-document.local";
+}
+
+void WebView2Viewer::PostNotice(const std::wstring& text) {
+    PostJson(L"{\"type\":\"notice\",\"text\":\"" + EscapeJsonString(text) + L"\"}");
+}
+
+// Edge's own find bar (ICoreWebView2Find, runtime 1.0.2849+), seeded with the reader's selection.
+bool WebView2Viewer::StartFind(const std::wstring& term) {
+    ICoreWebView2_28* webView = nullptr;
+    ICoreWebView2Environment15* environment = nullptr;
+    ICoreWebView2Find* find = nullptr;
+    ICoreWebView2FindOptions* options = nullptr;
+    bool started = false;
+    if (m_pWebView && m_pEnvironment &&
+        SUCCEEDED(m_pWebView->QueryInterface(IID_ICoreWebView2_28, reinterpret_cast<void**>(&webView))) &&
+        SUCCEEDED(webView->get_Find(&find)) && find &&
+        SUCCEEDED(m_pEnvironment->QueryInterface(IID_ICoreWebView2Environment15, reinterpret_cast<void**>(&environment))) &&
+        SUCCEEDED(environment->CreateFindOptions(&options)) && options) {
+        options->put_FindTerm(term.c_str());
+        options->put_ShouldHighlightAllMatches(TRUE);
+        auto* handler = new FindStartedHandler();
+        started = SUCCEEDED(find->Start(options, handler));
+        handler->Release();
+    }
+    ReleaseCom(options); ReleaseCom(environment); ReleaseCom(find); ReleaseCom(webView);
+    if (!started) PostNotice(L"Find in the preview needs a newer Microsoft Edge WebView2 Runtime. Ctrl+F in the editor still works.");
+    return started;
+}
+
+bool WebView2Viewer::ShowPrintDialog() {
+    ICoreWebView2_16* webView = nullptr;
+    bool shown = m_pWebView && SUCCEEDED(m_pWebView->QueryInterface(IID_ICoreWebView2_16, reinterpret_cast<void**>(&webView))) &&
+                 SUCCEEDED(webView->ShowPrintUI(COREWEBVIEW2_PRINT_DIALOG_KIND_BROWSER));
+    ReleaseCom(webView);
+    if (!shown) PostNotice(L"Printing needs a newer Microsoft Edge WebView2 Runtime.");
+    return shown;
+}
+
+// Relative images resolve against the document's folder through a virtual host (NavigateToString pages
+// have no base URL). Only that folder tree is reachable, read-only, without CORS.
+void WebView2Viewer::SetDocumentFolder(const std::wstring& folder) {
+    if (folder == m_documentFolder) return;
+    ICoreWebView2_3* webView = nullptr;
+    if (!m_pWebView || FAILED(m_pWebView->QueryInterface(IID_ICoreWebView2_3, reinterpret_cast<void**>(&webView)))) return;
+    if (!m_documentFolder.empty()) webView->ClearVirtualHostNameToFolderMapping(kDocumentHost);
+    m_documentFolder.clear();
+    if (!folder.empty() && SUCCEEDED(webView->SetVirtualHostNameToFolderMapping(kDocumentHost, folder.c_str(), COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS)))
+        m_documentFolder = folder;
+    ReleaseCom(webView);
+}
+
 void WebView2Viewer::SetTableWidths(const std::wstring& bufferId, const std::wstring& value) {
     PostJson(L"{\"type\":\"tableWidths\",\"bufferId\":\"" + EscapeJsonString(bufferId) + L"\",\"value\":\"" + EscapeJsonString(value) + L"\"}");
 }
@@ -680,6 +755,7 @@ bool WebView2Viewer::UpdateMarkdown(const std::string& markdownUtf8, const std::
          << L",\"caretLine\":" << caretLine
          << L",\"bufferId\":\"" << EscapeJsonString(bufferId) << L"\""
          << L",\"renderRevision\":\"" << sequence << L"\""
+         << L",\"docBase\":\"" << (m_documentFolder.empty() ? L"" : std::wstring(L"https://") + kDocumentHost + L"/") << L"\""
          << L"}";
 
     bool posted = PostJson(json.str());
@@ -741,6 +817,8 @@ void WebView2Viewer::OnWebMessageReceived(const std::wstring& message) {
         if (m_syncCallback) m_syncCallback();
         return;
     }
+    if (message == L"print") { ShowPrintDialog(); return; }
+    if (message == L"find" || message.starts_with(L"find:")) { StartFind(message.size() > 5 ? message.substr(5, 256) : L""); return; }
 
     if (message == L"toggleDark") {
         if (m_themeCallback) m_themeCallback();

@@ -311,6 +311,13 @@ body.toc-open #reader-wrap { padding-right: 300px; }
 :where([data-theme="dark"]) .doc :is(.hljs-name, .hljs-selector-tag, .hljs-symbol) { color: #7ee787; }
 :where([data-theme="dark"]) .doc :is(.hljs-subst, .hljs-params, .hljs-strong, .hljs-emphasis) { color: var(--ink); }
 
+/* Contents list of an exported HTML file (the live reader has the outline drawer instead) */
+.doc .export-toc { margin: 0 0 1.6em; padding: 10px 14px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--code-bg); font-family: var(--font-ui); font-size: 0.92em; }
+.doc .export-toc .toc-item { display: block; padding: 2px 0; margin: 0; border-radius: 0; white-space: normal; background: none; }
+.doc .export-toc .toc-l2 { padding-inline-start: 1em; } .doc .export-toc .toc-l3 { padding-inline-start: 2em; }
+.doc .export-toc :is(.toc-l4, .toc-l5, .toc-l6) { padding-inline-start: 3em; }
+@media print { .doc .export-toc { break-after: avoid; } }
+
 /* Footnotes */
 .doc .footnote-ref { line-height: 0; }
 .doc .footnote-ref a { text-decoration: none; padding: 0 1px; }

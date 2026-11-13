@@ -180,7 +180,10 @@ $converted = Join-Path $runRoot 'after-save.md'
 $inlineCode = [string][char]96 + 'inline' + [char]96
 $nl = [Environment]::NewLine
 $longBody = (@(1..140 | ForEach-Object { "Paragraph $_ for scrolling and source synchronization.$nl" }) -join $nl)
-$document = [string]::Join($nl,@("# $marker",'',"**Bold** and *italic* with $inlineCode and [a link](https://example.invalid/smoke).",'','> A quote.','','- [x] literal [ ]','','## Reading section','',$longBody))
+$document = [string]::Join($nl,@("# $marker",'',"**Bold** and *italic* with $inlineCode and [a link](https://example.invalid/smoke).",'','> A quote.','','- [x] literal [ ]','','![dot](img/dot.png)','','## Reading section','',$longBody))
+# A 1x1 PNG next to the document: the reader must load it through the document-folder virtual host.
+New-Item -ItemType Directory -Path (Join-Path $runRoot 'img') -Force | Out-Null
+[IO.File]::WriteAllBytes((Join-Path $runRoot 'img\dot.png'), [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))
 [IO.File]::WriteAllText($initial,$document,[Text.UTF8Encoding]::new($false))
 [IO.File]::WriteAllText($plain,$document.Replace($marker,$marker + '_SAVEAS'),[Text.UTF8Encoding]::new($false))
 $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0)
@@ -323,6 +326,14 @@ try {
         $state.colors.code -eq 'rgb(161, 103, 255)' -and $state.colors.quote -eq 'rgb(228, 172, 115)' -and
         $state.colors.link -eq 'rgb(62, 178, 255)') 'NativeGoldMarkdownRoles'
     $report.states.initial = $state
+
+    # Reader tools in the real WebView2: the document-relative image, then Edge's own find bar.
+    $image = Invoke-Probe 'evaluate' '(async()=>{const img=document.querySelector("#content img");if(!img)return "missing";if(!img.complete||!img.naturalWidth)await new Promise(r=>{img.addEventListener("load",r);img.addEventListener("error",r);setTimeout(r,5000);});return img.src+"|"+img.naturalWidth;})()'
+    Assert-Check ($image.value -eq 'https://npp-reader-document.local/img/dot.png|1') 'DocumentRelativeImage' ([string]$image.value)
+    Invoke-Probe 'evaluate' 'window.chrome.webview.postMessage("find:Reading")' | Out-Null
+    Start-Sleep -Milliseconds 800
+    $toast = Invoke-Probe 'evaluate' 'document.getElementById("toast-msg").textContent'
+    Assert-Check (!([string]$toast.value).Contains('newer')) 'NativeFindBarStarts' ([string]$toast.value)
 
     Assert-Check ([NppSmokeApi]::PathCommand($nppPid,$main,2101,0,$plain) -ne 0) 'OpenPlainTextSdk'
     $watch.Restart()

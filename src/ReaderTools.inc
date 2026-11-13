@@ -201,7 +201,10 @@ document.addEventListener('click', function(event) {
 document.addEventListener('auxclick', function(event) { if (event.target.closest && event.target.closest('#content a[href]')) event.preventDefault(); });
 
 // ---- Find / print ----------------------------------------------------------------------------------------
-function findInPreview() { if (!postToHost('find')) showToast('Find is available in the preview panel'); }
+function findInPreview() {
+    var selection = String(window.getSelection ? window.getSelection() : '').trim().slice(0, 256);
+    if (!postToHost(selection && selection.indexOf('\n') < 0 ? 'find:' + selection : 'find')) showToast('Find is available in the preview panel');
+}
 function printPreview() { closeReaderMenu(); if (!postToHost('print')) window.print(); }
 document.addEventListener('keydown', function(event) {
     if (event.ctrlKey && !event.altKey && !event.shiftKey && (event.key === 'f' || event.key === 'F')) { event.preventDefault(); findInPreview(); }
@@ -394,11 +397,44 @@ function layoutReaderTables(detail) {
     restore.forEach(function(pair) { pair[0].scrollLeft = pair[1].left; pair[0].scrollTop = pair[1].top; });
 }
 
+// ---- Images ----------------------------------------------------------------------------------------------
+// A relative src ("img/a.png", "./a.png", "sub/../a.png") is served from the document's folder through the
+// host's virtual folder mapping (docBase). Paths that climb above that folder, absolute paths and URLs stay as
+// written: the mapping exposes nothing outside the document's own folder tree.
+function documentRelativeUrl(src, base) {
+    if (!base || !src || /^(?:[a-z][a-z0-9+.-]*:|\/\/|\/|\\|#)/i.test(src)) return null;
+    var path = src.replace(/\\/g, '/').split(/[?#]/)[0], parts = [];
+    var segments = path.split('/');
+    for (var i = 0; i < segments.length; i++) {
+        var segment = segments[i];
+        if (!segment || segment === '.') continue;
+        if (segment === '..') { if (!parts.length) return null; parts.pop(); continue; }
+        parts.push(segment);
+    }
+    if (!parts.length) return null;
+    return base + parts.map(function(part) { try { part = decodeURIComponent(part); } catch (e) {} return encodeURIComponent(part); }).join('/');
+}
+function resolveDocumentImages(detail) {
+    var base = detail && detail.docBase || '';
+    document.querySelectorAll('#content img[src]').forEach(function(image) {
+        var url = documentRelativeUrl(image.getAttribute('src'), base);
+        if (url) image.src = url;
+    });
+}
+
 // ---- Wiring ----------------------------------------------------------------------------------------------
 function decorateReaderDocument(detail) {
     closeReaderMenu();
+    resolveDocumentImages(detail);
     layoutReaderTables(detail);
     decorateCodeBlocks();
+}
+if (window.chrome && window.chrome.webview) {
+    window.chrome.webview.addEventListener('message', function(event) {
+        var data = event.data;
+        if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { return; } }
+        if (data && data.type === 'notice' && typeof data.text === 'string') showToast(data.text, 6000);
+    });
 }
 document.addEventListener('readerRendered', function(event) { decorateReaderDocument(event.detail); });
 function initializeReaderTools() {

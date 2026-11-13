@@ -83,6 +83,18 @@ void PluginConfig::Load(const std::wstring& configPath) {
     wchar_t buf[512] = { 0 };
     GetPrivateProfileStringW(sec, L"SupportedExtensions", L".md,.markdown,.mdown,.mkd,.rst", buf, 512, configPath.c_str());
     supportedExtensions = buf;
+
+    // What the file holds now (absent keys stay absent, so the first Save still writes them).
+    m_persisted.clear();
+    m_persistedPath = configPath;
+    for (const wchar_t* key : {L"IsPanelVisible", L"AutoShowPanel", L"SyncWithCaret", L"ShowOutline", L"DarkModeOverride",
+                               L"IsSmartBiDiEnabled", L"Theme", L"BeardedVariant", L"ZoomLevelPercent", L"SupportedExtensions",
+                               L"ContentFontSizePx", L"ContentLineHeightPercent", L"ContentMaxWidthPx"}) {
+        wchar_t raw[512] = {};
+        const wchar_t* absent = L"\x1f<absent>";
+        GetPrivateProfileStringW(sec, key, absent, raw, 512, configPath.c_str());
+        if (wcscmp(raw, absent) != 0) m_persisted[key] = raw;
+    }
 }
 
 bool PluginConfig::Save(const std::wstring& configPath) const {
@@ -93,11 +105,19 @@ bool PluginConfig::Save(const std::wstring& configPath) const {
 
     const wchar_t* sec = L"Settings";
     DWORD firstError = ERROR_SUCCESS;
+    // Only keys this instance changed are written: a second Notepad++ instance that changed another setting
+    // keeps its value instead of having it overwritten by this instance's startup snapshot.
     auto write = [&](const wchar_t* key, const std::wstring& value) {
+        if (configPath == m_persistedPath) {
+            auto known = m_persisted.find(key);
+            if (known != m_persisted.end() && known->second == value) return;
+        }
         SetLastError(ERROR_SUCCESS);
         if (!WritePrivateProfileStringW(sec, key, value.c_str(), configPath.c_str())) {
             DWORD error = GetLastError();
             if (firstError == ERROR_SUCCESS) firstError = error ? error : ERROR_WRITE_FAULT;
+        } else if (configPath == m_persistedPath) {
+            m_persisted[key] = value;
         }
     };
     write(L"IsPanelVisible", isPanelVisible ? L"1" : L"0");

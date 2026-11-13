@@ -163,6 +163,13 @@ async () => {
     warning.querySelector('.reader-warning-close').click();
     expect(warning.hidden, 'Warnings can be dismissed');
 
+    // Relative images resolve inside the document's folder only
+    const base = 'https://npp-reader-document.local/';
+    expect(documentRelativeUrl('img/a b.png', base) === base + 'img/a%20b.png' && documentRelativeUrl('./x/../y.png', base) === base + 'y.png', 'Relative image paths map into the document folder');
+    expect(['../up.png', '/root.png', 'C:\\x.png', 'https://e.com/a.png', 'data:image/png;base64,AA', '//host/a.png', ''].every(src => documentRelativeUrl(src, base) === null) && documentRelativeUrl('a.png', '') === null, 'Absolute, external and escaping paths are left alone');
+    window.__emit({type:'notice', text:'Native notice'});
+    expect(document.getElementById('toast-msg').textContent === 'Native notice', 'Host notices appear as toasts');
+
     // Scrolling: another document jumps to its caret without animation; typing on the caret line does not re-centre
     const longDoc = Array.from({length: 120}, (_, i) => 'Line ' + i).join('\n\n');
     await render(longDoc, '41', -1);

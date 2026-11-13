@@ -22,6 +22,8 @@
 // Timer IDs
 #define IDT_RENDER_DEBOUNCE            3001
 #define RENDER_DEBOUNCE_DELAY_MS       50
+#define IDT_VIEWER_LOADING             3002
+#define VIEWER_LOADING_TIMEOUT_MS      20000
 
 #define WM_APP_VIEWER_RECOVERY         (WM_APP + 0x41)
 #define WM_APP_EXPORT_REQUEST          (WM_APP + 0x42)

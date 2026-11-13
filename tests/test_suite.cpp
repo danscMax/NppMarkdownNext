@@ -329,6 +329,23 @@ void TestHtmlExporter() {
     assert(html.find(L"</ul>") != std::wstring::npos);
     assert(html.find(L"alert-callout") != std::wstring::npos);
 
+    // Nested lists stay nested, ordered lists keep their first number, long documents get a contents list
+    {
+        std::wstring lists = HtmlExporter::ExportToHtml(MarkdownParser::Parse(
+            L"# A\n\n## B\n\n## C\n\n5. five\n6. six\n   - child\n   - child 2\n7. seven\n\nafter\n"), L"Lists", PreviewTheme::Light);
+        auto squeeze = [](std::wstring text) { std::erase_if(text, [](wchar_t c) { return c == L'\n'; }); return text; };
+        std::wstring flat = squeeze(lists);
+        assert(flat.find(L"<ol start=\"5\">") != std::wstring::npos);
+        size_t six = flat.find(L">six"), child = flat.find(L"<ul>", six), closeSix = flat.find(L"</li>", six);
+        assert(six != std::wstring::npos && child != std::wstring::npos && child < closeSix);
+        assert(flat.find(L"</ul></li>  <li") != std::wstring::npos);
+        assert(flat.find(L"seven</li></ol><p") != std::wstring::npos);
+        assert(lists.find(L"<nav class=\"export-toc\"") != std::wstring::npos);
+        std::wstring shortDoc = HtmlExporter::ExportToHtml(MarkdownParser::Parse(L"# Only\n\n- a\n"), L"Short", PreviewTheme::Light);
+        assert(shortDoc.find(L"export-toc\"") == std::wstring::npos);
+        assert(squeeze(shortDoc).find(L"<ul>  <li") != std::wstring::npos && squeeze(shortDoc).find(L"a</li></ul>") != std::wstring::npos);
+    }
+
     // 1. Verify BiDi isolated inline code
     assert(html.find(L"<code class=\"inline-code\" dir=\"ltr\"><bdi dir=\"ltr\">/etc/system/config.yaml</bdi></code>") != std::wstring::npos);
     assert(html.find(L"<code class=\"inline-code\" dir=\"ltr\"><bdi dir=\"ltr\">/usr/local/bin/app_server</bdi></code>") != std::wstring::npos);
@@ -616,6 +633,24 @@ void TestParserEdgeCases() {
 
 void TestReaderThemes() {
     std::cout << "[TEST] Reader themes and legacy settings..." << std::endl;
+    {
+        // Two Notepad++ instances share one settings file: each keeps the other's change.
+        wchar_t temp[MAX_PATH] = {}, file[MAX_PATH] = {};
+        assert(GetTempPathW(MAX_PATH, temp) && GetTempFileNameW(temp, L"Npc", 0, file));
+        PluginConfig seed;
+        assert(seed.Save(file));
+        PluginConfig first, second;
+        first.Load(file);
+        second.Load(file);
+        first.contentFontSizePx = 19;
+        assert(first.Save(file));
+        second.zoomLevel = 1.5f;
+        assert(second.Save(file));
+        PluginConfig merged;
+        merged.Load(file);
+        assert(merged.contentFontSizePx == 19 && static_cast<int>(merged.zoomLevel * 100 + 0.5f) == 150);
+        DeleteFileW(file);
+    }
     PluginConfig config;
     for (int i = 0; i <= static_cast<int>(ReaderTheme::Bearded); ++i) {
         config.theme = static_cast<ReaderTheme>(i);

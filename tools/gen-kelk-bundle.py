@@ -583,7 +583,8 @@ controller_js = r"""
     var bufferId = typeof data.bufferId === 'string' ? data.bufferId : '';
     var sync = typeof data.caretLine === 'number' && data.caretLine >= 0;
     currentDocument = {bufferId: bufferId, sync: sync, caretLine: sync ? data.caretLine : null, closed: false, index: index};
-    window.readerDocumentIndex = {bufferId: bufferId, renderRevision: data.renderRevision, sequence: sequence, state: state, headings: index.headings, blocks: index.blocks};
+    window.readerDocumentIndex = {bufferId: bufferId, renderRevision: data.renderRevision, sequence: sequence, state: state, headings: index.headings, blocks: index.blocks,
+                                  docBase: typeof data.docBase === 'string' ? data.docBase : ''};
     document.dispatchEvent(new CustomEvent('readerRendered', {detail: window.readerDocumentIndex}));
     var saved = readingPositions.get(bufferId);
     // Restored synchronously: a frame at the previous document's offset would flash, and a smooth scroll would animate.
