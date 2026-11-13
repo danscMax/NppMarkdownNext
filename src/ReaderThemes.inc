@@ -300,6 +300,28 @@ body.toc-open #reader-wrap { padding-right: 300px; }
 @media print { #theme-fab, #theme-popover, #toc-drawer, #toc-backdrop, #toast-msg, #reader-warnings { display: none !important; } }
 @media (prefers-reduced-motion: reduce) { body, #theme-fab, #theme-popover, #toc-drawer, .toast-notification { animation: none; transition: none; } }
 
+/* Tables: a table that does not fit the reading column grows into the free pane width (centered on the column),
+   and scrolls only when even the whole pane is too narrow. Track 2 = fit-content(column width), tracks 1/3 = the gutters. */
+#reader-wrap { container-type: inline-size; }
+#content { --reader-doc-pad: 22px; padding-inline: var(--reader-doc-pad); }
+#content .reader-table-wrap {
+    --reader-gutter: calc((100cqw - min(100cqw, var(--reader-max-width, 860px))) / 2 + var(--reader-doc-pad));
+    display: grid;
+    grid-template-columns: minmax(0, var(--reader-gutter)) fit-content(calc(100cqw - 2 * var(--reader-gutter))) minmax(0, var(--reader-gutter));
+    width: 100cqw;
+    margin: 1em 0;
+    margin-inline-start: calc(-1 * var(--reader-gutter));
+    overflow-x: auto;
+}
+#content .reader-table-wrap > table { grid-column: 2; display: table; width: auto; margin: 0; overflow: visible; }
+#content .reader-table-wrap th { position: relative; }
+/* still too wide: cap the height so the horizontal scrollbar stays on screen instead of below a long table */
+#content .reader-table-wrap.reader-table-overflow { max-height: calc(100vh - 48px); overflow: auto; }
+#content .reader-table-overflow thead th { position: sticky; top: 0; z-index: 1; }
+.reader-col-grip { position: absolute; top: 0; bottom: 0; inset-inline-end: 0; width: 7px; cursor: col-resize; touch-action: none; }
+.reader-col-grip:hover, .reader-col-grip.active { background: var(--link-color); opacity: 0.45; }
+body.reader-col-resizing { cursor: col-resize; user-select: none; }
+
 )THEME_CSS";
 inline constexpr const char* s_readerSettingsHtml = R"SETTINGS_HTML(
 <button id="theme-fab" title="Settings" aria-label="Settings" aria-expanded="false" aria-controls="theme-popover" onclick="toggleThemePopover(event)">
@@ -943,14 +965,84 @@ function initializeReaderSettings() {
         if (pop.style.display === 'block') { closeThemePopover(); document.getElementById('theme-fab').focus(); }
         else if (document.body.classList.contains('toc-open')) closeToc();
     });
-    document.addEventListener('readerRendered', function(event) { updateReaderOutline(event.detail); });
+    document.addEventListener('readerRendered', function(event) { updateReaderOutline(event.detail); layoutReaderTables(event.detail); });
     document.addEventListener('scroll', scheduleCurrentSection, {passive: true, capture: true});
     window.addEventListener('resize', function() { positionThemePopover(); scheduleCurrentSection(); });
-    if (window.readerDocumentIndex) updateReaderOutline(window.readerDocumentIndex);
+    if (window.readerDocumentIndex) { updateReaderOutline(window.readerDocumentIndex); layoutReaderTables(window.readerDocumentIndex); }
     applyContentTypography();
 }
+// Column widths the user dragged, kept across re-renders of the same buffer for this session.
+// shortcut: keyed by table position + column count, so inserting a table above shifts the widths; persist in config if that matters.
+var readerColumnWidths = new Map();
+var readerTableObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(markOverflowingTables) : null;
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initializeReaderSettings);
 else initializeReaderSettings();
+
+function markOverflowingTables() {
+    document.querySelectorAll('#content .reader-table-wrap').forEach(function(wrap) {
+        wrap.classList.toggle('reader-table-overflow', wrap.scrollWidth > wrap.clientWidth + 1);
+    });
+}
+function applyColumnWidths(table, widths) {
+    var cells = Array.from(table.rows[0].cells);
+    table.style.tableLayout = widths ? 'fixed' : '';
+    table.style.width = widths ? widths.reduce(function(sum, w) { return sum + w; }, 0) + 'px' : '';
+    cells.forEach(function(cell, i) { cell.style.width = widths ? widths[i] + 'px' : ''; });
+}
+function startColumnResize(event, table, key, column) {
+    if (event.button !== 0) return;
+    event.preventDefault(); event.stopPropagation();
+    var grip = event.currentTarget;
+    var widths = Array.from(table.rows[0].cells).map(function(cell) { return Math.round(cell.getBoundingClientRect().width); });
+    var rtl = getComputedStyle(table).direction === 'rtl';
+    var startX = event.clientX, startWidth = widths[column];
+    grip.setPointerCapture(event.pointerId);
+    grip.classList.add('active');
+    document.body.classList.add('reader-col-resizing');
+    function move(e) {
+        widths[column] = Math.max(40, startWidth + Math.round(rtl ? startX - e.clientX : e.clientX - startX));
+        applyColumnWidths(table, widths);
+    }
+    function end() {
+        grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', end); grip.removeEventListener('pointercancel', end);
+        grip.classList.remove('active');
+        document.body.classList.remove('reader-col-resizing');
+        readerColumnWidths.delete(key); readerColumnWidths.set(key, widths.slice());
+        while (readerColumnWidths.size > 200) readerColumnWidths.delete(readerColumnWidths.keys().next().value);
+        markOverflowingTables();
+    }
+    grip.addEventListener('pointermove', move); grip.addEventListener('pointerup', end); grip.addEventListener('pointercancel', end);
+}
+function layoutReaderTables(detail) {
+    var content = document.getElementById('content');
+    if (!content) return;
+    var bufferId = detail && detail.bufferId || '';
+    Array.from(content.querySelectorAll('table')).filter(function(table) {
+        return table.id !== 'hrdftrtbl' && !table.parentElement.closest('table') && table.rows.length;
+    }).forEach(function(table, index) {
+        if (!table.parentElement.classList.contains('reader-table-wrap')) {
+            var wrap = document.createElement('div');
+            wrap.className = 'reader-table-wrap';
+            table.before(wrap); wrap.appendChild(table);
+        }
+        var cells = Array.from(table.rows[0].cells);
+        var key = bufferId + '|' + index + '|' + cells.length;
+        cells.forEach(function(cell, column) {
+            if (cell.querySelector(':scope > .reader-col-grip')) return;
+            var grip = document.createElement('span');
+            grip.className = 'reader-col-grip';
+            grip.title = 'Drag to resize the column, double-click to reset';
+            grip.setAttribute('aria-hidden', 'true');
+            grip.addEventListener('pointerdown', function(e) { startColumnResize(e, table, key, column); });
+            grip.addEventListener('dblclick', function(e) { e.stopPropagation(); readerColumnWidths.delete(key); applyColumnWidths(table, null); markOverflowingTables(); });
+            cell.appendChild(grip);
+        });
+        var saved = readerColumnWidths.get(key);
+        if (saved) applyColumnWidths(table, saved);
+    });
+    if (readerTableObserver) readerTableObserver.observe(document.getElementById('reader-wrap'));
+    markOverflowingTables();
+}
 
 )THEME_JS";
 

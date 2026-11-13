@@ -111,6 +111,18 @@ async () => {
         expect(color('#content ' + selector) === expected, 'GoldMarkdownRoles ' + selector);
     }
     expect(color('#content') === 'rgb(184, 196, 228)', 'GoldMarkdownRoles body text');
+    const tablesMd = '| a | b |\n|---|---|\n| 1 | 2 |\n\n| id | where |\n|---|---|\n| x | `' + 'w'.repeat(140) + '` |\n';
+    await render(tablesMd, '31');
+    const content = document.getElementById('content'), contentBox = content.getBoundingClientRect();
+    const [smallWrap, wideWrap] = content.querySelectorAll('.reader-table-wrap');
+    expect(smallWrap && wideWrap && smallWrap.querySelectorAll('.reader-col-grip').length === 2, 'Tables are wrapped and get one resize grip per column');
+    expect(Math.abs(smallWrap.firstChild.getBoundingClientRect().left - contentBox.left - parseFloat(getComputedStyle(content).paddingLeft)) < 2, 'A narrow table stays aligned with the reading column');
+    expect(wideWrap.firstChild.getBoundingClientRect().width > content.clientWidth || wideWrap.classList.contains('reader-table-overflow'), 'A wide table uses the free pane width or scrolls inside the visible pane');
+    readerColumnWidths.set('31|0|2', [120, 200]);
+    await render(tablesMd + '\n', '31');
+    expect(content.querySelector('.reader-table-wrap table').rows[0].cells[1].style.width === '200px', 'Resized column widths survive a re-render of the same buffer');
+    await render(tablesMd, '32');
+    expect(content.querySelector('.reader-table-wrap table').rows[0].cells[1].style.width === '', 'Resized column widths do not leak into another buffer');
     settings();
     const darkRow = row('Dark mode:');
     const beforeDark = window.__messages.length;
