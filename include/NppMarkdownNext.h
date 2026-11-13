@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include "PluginInterface.h"
 #include "Docking.h"
 #include "Config.h"
@@ -72,6 +73,8 @@ private:
     void ShowExportWarning(const std::wstring& message);
     void HandleCheckboxToggle(const CheckboxRequest& request);
     void OnSettingsMessage(const std::wstring& message);
+    std::wstring LoadTableWidths(const std::wstring& path) const;
+    void SaveTableWidths(const std::wstring& message);
     std::wstring GetCurrentBufferPath() const;
     bool IsCurrentBufferMarkdown() const;
 
@@ -86,6 +89,8 @@ private:
 
     PluginConfig m_config;
     std::wstring m_configPath;
+    std::wstring m_tableWidthsPath;
+    std::unordered_map<std::wstring, std::wstring> m_tableWidthsCache; // key -> value; keeps the session's widths if the file write fails
     WebView2Viewer m_webViewViewer;
     MarkdownDocument m_currentDoc;
 

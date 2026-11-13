@@ -53,6 +53,7 @@ public:
     void ScrollToLine(int line);
     void SetTheme(bool isDark, const std::wstring& themeId = L"follow");
     void SetBiDi(bool isBiDi);
+    void SetTableWidths(const std::wstring& bufferId, const std::wstring& value);
     void SyncUiState(const PluginConfig& config);
     bool ReportOperationResult(const std::wstring& operation, const OperationResult& result, const std::wstring& requestId = L"");
     bool IsCurrentRender(const CheckboxRequest& request) const;

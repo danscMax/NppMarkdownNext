@@ -583,6 +583,10 @@ void WebView2Viewer::SetBiDi(bool isBiDi) {
     PostJson(L"{\"type\":\"setBiDi\",\"isBiDi\":" + std::wstring(isBiDi ? L"true" : L"false") + L"}");
 }
 
+void WebView2Viewer::SetTableWidths(const std::wstring& bufferId, const std::wstring& value) {
+    PostJson(L"{\"type\":\"tableWidths\",\"bufferId\":\"" + EscapeJsonString(bufferId) + L"\",\"value\":\"" + EscapeJsonString(value) + L"\"}");
+}
+
 void WebView2Viewer::SyncUiState(const PluginConfig& config) {
     std::wstringstream json;
     json << L"{\"type\":\"settings\",\"sync\":" << (config.syncWithCaret ? L"true" : L"false")

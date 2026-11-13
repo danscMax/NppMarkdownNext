@@ -54,6 +54,10 @@ struct ReaderLifecycleTestPeer {
                 return TRUE;
             }
             case NPPM_GETCURRENTBUFFERID: return editor->bufferId;
+            case NPPM_GETFULLPATHFROMBUFFERID:
+                if (wParam != editor->bufferId) return -1;
+                if (lParam) wcscpy_s(reinterpret_cast<wchar_t*>(lParam), editor->path.size() + 1, editor->path.c_str());
+                return static_cast<LRESULT>(editor->path.size());
             case NPPM_GETCURRENTSCINTILLA: *reinterpret_cast<int*>(lParam) = 0; return TRUE;
             case NPPM_ISDARKMODEENABLED: return FALSE;
             case NPPM_DMMSHOW: ShowWindow(reinterpret_cast<HWND>(lParam), SW_SHOW); return TRUE;
@@ -132,6 +136,7 @@ struct ReaderLifecycleTestPeer {
             host.Cleanup();
             if (owner) DestroyWindow(owner);
             DeleteFileW(iniPath.c_str());
+            DeleteFileW((editor.configRoot + L"\\NppMarkdownNext.tables.ini").c_str());
             assert(RemoveDirectoryW(editor.configRoot.c_str()));
         }
 
@@ -379,6 +384,33 @@ struct ReaderLifecycleTestPeer {
         assert(!fixture.host.m_isPanelVisible);
     }
 
+    static void TableWidthsPersistPerDocument() {
+        Fixture fixture;
+        fixture.host.SetPanelVisible(true);
+        fixture.Ready();
+        const std::wstring id = std::to_wstring(fixture.editor.bufferId);
+        fixture.host.OnSettingsMessage(L"tableWidths:" + id + L":0a1b2c3d:120,200");
+        fixture.host.OnSettingsMessage(L"tableWidths:" + id + L":bad=value");
+        fixture.host.OnSettingsMessage(L"tableWidths:x1:0a1b2c3d:1");
+        fixture.host.OnSettingsMessage(L"tableWidths:999:0a1b2c3d:1");
+        assert(fixture.host.LoadTableWidths(fixture.editor.path) == L"0a1b2c3d:120,200");
+        assert(fixture.host.LoadTableWidths(L"C:\\READER-TEST\\ONE.MD") == L"0a1b2c3d:120,200");
+        fixture.messages.clear();
+        fixture.host.OnBufferActivated();
+        fixture.Tick();
+        assert(fixture.Count(L"\"type\":\"tableWidths\"") == 1 && fixture.Count(L"\"value\":\"0a1b2c3d:120,200\"") == 1);
+        fixture.messages.clear();
+        fixture.editor.text = "# Typed\n";
+        fixture.host.RequestRenderDebounced();
+        fixture.Tick();
+        assert(fixture.Count(L"\"type\":\"render\"") == 1 && fixture.Count(L"\"type\":\"tableWidths\"") == 0);
+        fixture.host.OnSettingsMessage(L"tableWidths:" + id + L":");
+        assert(fixture.host.LoadTableWidths(fixture.editor.path).empty());
+        fixture.editor.path = L"new 1";
+        fixture.host.OnSettingsMessage(L"tableWidths:" + id + L":0a1b2c3d:1");
+        assert(fixture.host.LoadTableWidths(L"new 1").empty());
+    }
+
     static void SettingsWarningLifecycle() {
         Fixture fixture;
         fixture.Ready();
@@ -583,6 +615,7 @@ int main(int argc, char** argv) {
         {"ForceEmptyAndManualText", Peer::ForceEmptyAndManualText},
         {"SaveAsAndRenamePolicy", Peer::SaveAsAndRenamePolicy},
         {"SettingsWarningLifecycle", Peer::SettingsWarningLifecycle},
+        {"TableWidthsPersistPerDocument", Peer::TableWidthsPersistPerDocument},
         {"TypedOperationResultsAndRequests", Peer::TypedOperationResultsAndRequests},
         {"ExportWarningsReachNativeUi", Peer::ExportWarningsReachNativeUi},
         {"CheckboxProtocolIsStrict", Peer::CheckboxProtocolIsStrict},
