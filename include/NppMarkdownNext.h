@@ -75,6 +75,9 @@ private:
     void OnSettingsMessage(const std::wstring& message);
     std::wstring LoadTableWidths(const std::wstring& path) const;
     void SaveTableWidths(const std::wstring& message);
+    void OpenLink(const std::wstring& href);
+    void UpdateStatusFont();
+    COLORREF StatusColor(bool background) const;
     std::wstring GetCurrentBufferPath() const;
     bool IsCurrentBufferMarkdown() const;
 
@@ -98,6 +101,9 @@ private:
     bool m_isPanelRegistered = false;
     bool m_isPanelVisible = false;
     bool m_userClosedPanel = false;
+    bool m_restorePanelOnStartup = false; // the panel was open when Notepad++ closed (used when auto-show is off)
+    HFONT m_statusFont = nullptr;
+    UINT m_statusFontDpi = 0;
     bool m_openSettingsPending = false;
     bool m_shuttingDown = false;
     bool m_forceRenderPending = false;

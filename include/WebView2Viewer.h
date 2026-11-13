@@ -54,6 +54,11 @@ public:
     void SetTheme(bool isDark, const std::wstring& themeId = L"follow");
     void SetBiDi(bool isBiDi);
     void SetTableWidths(const std::wstring& bufferId, const std::wstring& value);
+    void SetDocumentFolder(const std::wstring& folder);
+    void PostNotice(const std::wstring& text);
+    bool StartFind(const std::wstring& term);
+    bool ShowPrintDialog();
+    const std::wstring& RenderedBufferId() const { return m_renderedBufferId; }
     void SyncUiState(const PluginConfig& config);
     bool ReportOperationResult(const std::wstring& operation, const OperationResult& result, const std::wstring& requestId = L"");
     bool IsCurrentRender(const CheckboxRequest& request) const;
@@ -109,6 +114,7 @@ private:
     } m_pendingRender;
     ULONGLONG m_renderSequence = 0;
     std::wstring m_renderedBufferId;
+    std::wstring m_documentFolder; // folder mapped to the virtual document host, empty when none
 
     CheckboxCallback m_checkboxCallback;
     JumpToLineCallback m_jumpToLineCallback;

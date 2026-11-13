@@ -1,6 +1,7 @@
 #pragma once
 #include <windows.h>
 #include <string>
+#include <map>
 
 enum class ReaderTheme {
     FollowNpp = 0,
@@ -38,4 +39,9 @@ struct PluginConfig {
     bool SetThemeId(const std::wstring& id);
     void Load(const std::wstring& configPath);
     bool Save(const std::wstring& configPath) const;
+
+private:
+    // Raw values last read from / written to m_persistedPath, so Save writes only what changed here.
+    mutable std::map<std::wstring, std::wstring> m_persisted;
+    mutable std::wstring m_persistedPath;
 };

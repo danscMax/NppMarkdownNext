@@ -273,23 +273,37 @@ PreviewComponents HtmlExporter::GeneratePreviewComponents(
 ) {
     std::wstringstream bodyStream;
     std::wstringstream tocStream;
+    size_t tocEntries = 0;
     std::set<std::wstring> headingIds = ReservedReaderHeadingIds();
 
-    bool inUnorderedList = false;
-    bool inOrderedList = false;
-
-    auto closeOpenLists = [&]() {
-        if (inUnorderedList) { bodyStream << L"</ul>\n"; inUnorderedList = false; }
-        if (inOrderedList) { bodyStream << L"</ol>\n"; inOrderedList = false; }
+    // Open lists, innermost last; each one has an open <li> that a deeper list nests into.
+    struct OpenList { bool ordered; int level; };
+    std::vector<OpenList> openLists;
+    auto closeListsDeeperThan = [&](int level) {
+        while (!openLists.empty() && openLists.back().level > level) {
+            bodyStream << L"</li>\n" << (openLists.back().ordered ? L"</ol>\n" : L"</ul>\n");
+            openLists.pop_back();
+        }
+    };
+    auto closeOpenLists = [&]() { closeListsDeeperThan(-1); };
+    // Starts the item's <li> (left open): closes deeper lists and the previous sibling, opens a list if needed.
+    auto beginListItem = [&](const MarkdownBlock& block, bool ordered) {
+        int level = (std::max)(0, block.level);
+        closeListsDeeperThan(level);
+        if (!openLists.empty() && openLists.back().level == level) {
+            if (openLists.back().ordered == ordered) bodyStream << L"</li>\n";
+            else closeListsDeeperThan(level - 1);
+        }
+        if (openLists.empty() || openLists.back().level < level) {
+            if (ordered) bodyStream << L"<ol" << (block.listIndex != 1 ? L" start=\"" + std::to_wstring(block.listIndex) + L"\"" : L"") << L">\n";
+            else bodyStream << L"<ul>\n";
+            openLists.push_back({ordered, level});
+        }
     };
 
     for (const auto& block : doc.blocks) {
-        if (block.type != MarkdownBlockType::UnorderedListItem && block.type != MarkdownBlockType::TaskListItem) {
-            if (inUnorderedList) { bodyStream << L"</ul>\n"; inUnorderedList = false; }
-        }
-        if (block.type != MarkdownBlockType::OrderedListItem) {
-            if (inOrderedList) { bodyStream << L"</ol>\n"; inOrderedList = false; }
-        }
+        if (block.type != MarkdownBlockType::UnorderedListItem && block.type != MarkdownBlockType::TaskListItem &&
+            block.type != MarkdownBlockType::OrderedListItem) closeOpenLists();
 
         const wchar_t* dirAttr = block.isRTL ? L" dir=\"rtl\"" : L" dir=\"ltr\"";
 
@@ -317,6 +331,7 @@ PreviewComponents HtmlExporter::GeneratePreviewComponents(
                 std::wstring tocText = InlinesToPlainText(block.inlines);
                 tocStream << L"<a href=\"#" << hId << L"\" class=\"toc-item toc-l" << hNum << L"\""
                           << dirAttr << L">" << EscapeHtml(tocText) << L"</a>\n";
+                ++tocEntries;
                 break;
             }
 
@@ -421,36 +436,20 @@ PreviewComponents HtmlExporter::GeneratePreviewComponents(
                 break;
             }
 
-            case MarkdownBlockType::UnorderedListItem: {
-                if (!inUnorderedList) {
-                    bodyStream << L"<ul>\n";
-                    inUnorderedList = true;
-                }
-                bodyStream << L"  <li data-source-line=\"" << block.sourceLineStart << L"\"" << dirAttr << L">"
-                           << InlinesToHtml(block.inlines) << L"</li>\n";
-                break;
-            }
-
+            case MarkdownBlockType::UnorderedListItem:
             case MarkdownBlockType::OrderedListItem: {
-                if (!inOrderedList) {
-                    bodyStream << L"<ol>\n";
-                    inOrderedList = true;
-                }
+                beginListItem(block, block.type == MarkdownBlockType::OrderedListItem);
                 bodyStream << L"  <li data-source-line=\"" << block.sourceLineStart << L"\"" << dirAttr << L">"
-                           << InlinesToHtml(block.inlines) << L"</li>\n";
+                           << InlinesToHtml(block.inlines);
                 break;
             }
 
             case MarkdownBlockType::TaskListItem: {
-                if (!inUnorderedList) {
-                    bodyStream << L"<ul>\n";
-                    inUnorderedList = true;
-                }
+                beginListItem(block, false);
                 bodyStream << L"  <li class=\"task-list-item\" data-source-line=\"" << block.sourceLineStart << L"\"" << dirAttr << L">\n";
                 bodyStream << L"    <input type=\"checkbox\" class=\"task-checkbox\" data-line=\""
                            << block.sourceLineStart << L"\" " << (block.isTaskChecked ? L"checked" : L"") << L"> ";
-                bodyStream << L"<span>" << InlinesToHtml(block.inlines) << L"</span>\n";
-                bodyStream << L"  </li>\n";
+                bodyStream << L"<span>" << InlinesToHtml(block.inlines) << L"</span>";
                 break;
             }
 
@@ -487,6 +486,8 @@ PreviewComponents HtmlExporter::GeneratePreviewComponents(
     html << "</head>\n<body class=\"" << bodyClass << "\">\n";
     html << "<div id=\"reader-wrap\">\n";
     html << "  <main id=\"content\" class=\"doc\" dir=\"auto\">\n";
+    // A shared file has no reader outline drawer: longer documents get their contents list on top.
+    if (tocEntries >= 3) html << "<nav class=\"export-toc\" aria-label=\"Contents\">\n" << tocHtmlUtf8 << "</nav>\n";
     html << bodyHtmlUtf8;
     html << "\n  </main>\n</div>\n";
     html << "</body>\n</html>\n";

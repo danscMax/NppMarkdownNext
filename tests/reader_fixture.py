@@ -5,13 +5,14 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[1]
 bundle = (root / 'src/KelkBundle.inc').read_text(encoding='utf-8')
 themes = (root / 'src/ReaderThemes.inc').read_text(encoding='utf-8')
+tools = (root / 'src/ReaderTools.inc').read_text(encoding='utf-8')
 palette = (root / 'src/ThemePalette.inc').read_text(encoding='utf-8')
 shell = re.search(r'R"KELK_HTML_EOF\((.*?)\)KELK_HTML_EOF"', bundle, re.S)[1]
 css = re.search(r'R"THEME_CSS\((.*?)\)THEME_CSS"', themes, re.S)[1]
 script = re.search(r'R"THEME_JS\((.*?)\)THEME_JS"', themes, re.S)[1]
-css = re.search(r'R"PALETTE_CSS\((.*?)\)PALETTE_CSS"', palette, re.S)[1] + css + re.search(r'R"SEMANTIC_CSS\((.*?)\)SEMANTIC_CSS"', palette, re.S)[1]
-script = re.search(r'R"CATALOG_JS\((.*?)\)CATALOG_JS"', palette, re.S)[1] + script
-widgets = re.search(r'R"SETTINGS_HTML\((.*?)\)SETTINGS_HTML"', themes, re.S)[1]
+css = re.search(r'R"PALETTE_CSS\((.*?)\)PALETTE_CSS"', palette, re.S)[1] + css + re.search(r'R"SEMANTIC_CSS\((.*?)\)SEMANTIC_CSS"', palette, re.S)[1] + re.search(r'R"TOOLS_CSS\((.*?)\)TOOLS_CSS"', tools, re.S)[1]
+script = re.search(r'R"CATALOG_JS\((.*?)\)CATALOG_JS"', palette, re.S)[1] + script + re.search(r'R"TOOLS_JS\((.*?)\)TOOLS_JS"', tools, re.S)[1]
+widgets = re.search(r'R"SETTINGS_HTML\((.*?)\)SETTINGS_HTML"', themes, re.S)[1] + re.search(r'R"TOOLS_HTML\((.*?)\)TOOLS_HTML"', tools, re.S)[1]
 pos = shell.rfind('</head>')
 shell = shell[:pos] + '<style>' + css + '</style><script>' + script + '</script>' + shell[pos:]
 pos = shell.rfind('</body>')

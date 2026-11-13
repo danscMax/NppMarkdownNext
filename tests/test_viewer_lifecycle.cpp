@@ -1,5 +1,7 @@
 #include "../include/NppMarkdownNext.h"
 #include "../include/Resource.h"
+#include "../include/BiDiEngine.h"
+#include "../include/Scintilla.h"
 #include <cassert>
 #include <cstring>
 #include <iostream>
@@ -16,6 +18,8 @@ struct ReaderLifecycleTestPeer {
         std::wstring path = L"C:\\reader-test\\one.md";
         std::wstring configRoot;
         UINT_PTR bufferId = 42;
+        UINT codePage = SC_CP_UTF8;
+        std::wstring lastOpened;
         bool readOnly = false;
         size_t selectionStart = 0;
         size_t selectionEnd = 0;
@@ -54,6 +58,7 @@ struct ReaderLifecycleTestPeer {
                 return TRUE;
             }
             case NPPM_GETCURRENTBUFFERID: return editor->bufferId;
+            case NPPM_DOOPEN: editor->lastOpened = reinterpret_cast<const wchar_t*>(lParam); return TRUE;
             case NPPM_GETFULLPATHFROMBUFFERID:
                 if (wParam != editor->bufferId) return -1;
                 if (lParam) wcscpy_s(reinterpret_cast<wchar_t*>(lParam), editor->path.size() + 1, editor->path.c_str());
@@ -66,7 +71,9 @@ struct ReaderLifecycleTestPeer {
             case SCI_GETTEXT:
                 strncpy_s(reinterpret_cast<char*>(lParam), static_cast<size_t>(wParam), editor->text.c_str(), _TRUNCATE);
                 return static_cast<LRESULT>(editor->text.size());
-            case SCI_GETCURRENTPOS:
+            case SCI_GETCURRENTPOS: return static_cast<LRESULT>(editor->selectionEnd);
+            case SCI_GETANCHOR: return static_cast<LRESULT>(editor->selectionStart);
+            case SCI_GETCODEPAGE: return static_cast<LRESULT>(editor->codePage);
             case SCI_LINEFROMPOSITION: return 0;
             case SCI_GETREADONLY: return editor->readOnly;
             case SCI_POSITIONFROMLINE: {
@@ -322,7 +329,7 @@ struct ReaderLifecycleTestPeer {
         fixture.messages.clear();
         fixture.editor.text = "# Edited\n";
         ULONGLONG started = GetTickCount64();
-        fixture.host.RequestRenderDebounced();
+        fixture.host.OnDocModified();
         MSG message;
         while (fixture.Count(L"\"type\":\"render\"") == 0 && GetTickCount64() - started < 2000) {
             if (PeekMessageW(&message, fixture.host.m_hPanel, WM_TIMER, WM_TIMER, PM_REMOVE)) DispatchMessageW(&message);
@@ -384,6 +391,74 @@ struct ReaderLifecycleTestPeer {
         assert(!fixture.host.m_isPanelVisible);
     }
 
+    static void EditorIntegrationDetails() {
+        Fixture fixture;
+        auto& host = fixture.host;
+        // An "ANSI" buffer (code page 0) reaches the reader as UTF-8 in the system code page's meaning
+        fixture.editor.codePage = 0;
+        fixture.editor.text = "caf\xE9";
+        wchar_t expected[8] = {};
+        assert(MultiByteToWideChar(CP_ACP, 0, "caf\xE9", 4, expected, 8) == 4);
+        assert(host.GetScintillaText(fixture.owner) == BiDiEngine::WideToUtf8(expected));
+        fixture.editor.codePage = SC_CP_UTF8;
+
+        // Toggling a task keeps the user's selection; a read-only file explains why nothing changed
+        fixture.editor.text = "- [ ] Task\nsome text\n";
+        host.SetPanelVisible(true);
+        fixture.Ready();
+        fixture.Tick();
+        fixture.editor.selectionStart = 13;
+        fixture.editor.selectionEnd = 17;
+        fixture.SendCheckbox(fixture.Checkbox(0, 2, 0));
+        assert(fixture.editor.text.starts_with("- [x] Task") && fixture.editor.selectionStart == 13 && fixture.editor.selectionEnd == 17);
+        fixture.Tick();
+        fixture.messages.clear();
+        fixture.editor.readOnly = true;
+        fixture.SendCheckbox(fixture.Checkbox(0, 2, 1));
+        assert(fixture.Count(L"\"type\":\"notice\"") == 1 && fixture.Count(L"read-only") == 1);
+        fixture.editor.readOnly = false;
+
+        // A render request without any edit copies nothing and posts nothing
+        fixture.Tick();
+        fixture.messages.clear();
+        host.RequestRenderDebounced();
+        fixture.Tick();
+        assert(fixture.Count(L"\"type\":\"render\"") == 0);
+
+        // A manually previewed non-Markdown file stays live while it is edited (auto-show would hide the panel there)
+        host.m_config.autoShowPanel = false;
+        fixture.editor.path = L"C:\\reader-test\\notes.txt";
+        host.OnBufferActivated();
+        fixture.Tick();
+        fixture.messages.clear();
+        fixture.editor.text = "# Edited notes\n";
+        host.OnDocModified();
+        fixture.Tick();
+        assert(fixture.Count(L"\"type\":\"render\"") == 1 && fixture.Count(L"Edited notes") == 1);
+        assert(fixture.Count(L"\"docBase\":\"https://npp-reader-document.local/\"") == 0); // no webview in the test: no mapping
+    }
+
+    static void LinksOpenOnlySafeTargets() {
+        Fixture fixture;
+        fixture.Ready();
+        const std::wstring folder = fixture.editor.configRoot, plan = folder + L"\\plan.md";
+        HANDLE file = CreateFileW(plan.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        assert(file != INVALID_HANDLE_VALUE);
+        CloseHandle(file);
+        fixture.editor.path = folder + L"\\doc.md";
+        fixture.host.OnSettingsMessage(L"openLink:plan.md#section");
+        assert(fixture.editor.lastOpened == plan);
+        fixture.editor.lastOpened.clear();
+        fixture.messages.clear();
+        fixture.host.OnSettingsMessage(L"openLink:\\\\attacker.example\\share\\x.md");
+        fixture.host.OnSettingsMessage(L"openLink:file://attacker.example/share/x.md");
+        assert(fixture.editor.lastOpened.empty() && fixture.Count(L"network locations") == 2);
+        fixture.host.OnSettingsMessage(L"openLink:ms-settings:privacy");
+        fixture.host.OnSettingsMessage(L"openLink:missing.md");
+        assert(fixture.editor.lastOpened.empty() && fixture.Count(L"not opened from the preview: ms-settings") == 1 && fixture.Count(L"was not found") == 1);
+        DeleteFileW(plan.c_str());
+    }
+
     static void TableWidthsPersistPerDocument() {
         Fixture fixture;
         fixture.host.SetPanelVisible(true);
@@ -401,7 +476,7 @@ struct ReaderLifecycleTestPeer {
         assert(fixture.Count(L"\"type\":\"tableWidths\"") == 1 && fixture.Count(L"\"value\":\"0a1b2c3d:120,200\"") == 1);
         fixture.messages.clear();
         fixture.editor.text = "# Typed\n";
-        fixture.host.RequestRenderDebounced();
+        fixture.host.OnDocModified();
         fixture.Tick();
         assert(fixture.Count(L"\"type\":\"render\"") == 1 && fixture.Count(L"\"type\":\"tableWidths\"") == 0);
         fixture.host.OnSettingsMessage(L"tableWidths:" + id + L":");
@@ -616,6 +691,8 @@ int main(int argc, char** argv) {
         {"SaveAsAndRenamePolicy", Peer::SaveAsAndRenamePolicy},
         {"SettingsWarningLifecycle", Peer::SettingsWarningLifecycle},
         {"TableWidthsPersistPerDocument", Peer::TableWidthsPersistPerDocument},
+        {"LinksOpenOnlySafeTargets", Peer::LinksOpenOnlySafeTargets},
+        {"EditorIntegrationDetails", Peer::EditorIntegrationDetails},
         {"TypedOperationResultsAndRequests", Peer::TypedOperationResultsAndRequests},
         {"ExportWarningsReachNativeUi", Peer::ExportWarningsReachNativeUi},
         {"CheckboxProtocolIsStrict", Peer::CheckboxProtocolIsStrict},

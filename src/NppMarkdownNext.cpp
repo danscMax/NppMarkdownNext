@@ -7,6 +7,7 @@
 #include <commctrl.h>
 #include <shlwapi.h>
 #include <commdlg.h>
+#include <shellapi.h>
 #include <algorithm>
 #include <fstream>
 #include <sstream>
@@ -14,6 +15,7 @@
 #include <utility>
 #include <cstdint>
 #include <iomanip>
+#include <climits>
 
 extern "C" int GetPluginCmdId(int index);
 
@@ -73,6 +75,20 @@ std::wstring TableWidthsKey(std::wstring path) {
     return key;
 }
 
+// \\server\share prefix of a UNC path, lower-cased; empty for anything else.
+std::wstring UncShare(const std::wstring& path) {
+    if (!PathIsUNCW(path.c_str())) return L"";
+    const size_t server = path.find(L'\\', 2);
+    if (server == std::wstring::npos) return L"";
+    std::wstring share = path.substr(0, path.find(L'\\', server + 1));
+    CharLowerBuffW(share.data(), static_cast<DWORD>(share.size()));
+    return share;
+}
+bool IsOnSameShare(const std::wstring& target, const std::wstring& document) {
+    const std::wstring share = UncShare(target);
+    return !share.empty() && share == UncShare(document);
+}
+
 // The reader's wire format "fp:w,w;fp:w" (see persistTableWidths): only these characters, bounded size.
 bool IsTableWidthsValue(const std::wstring& value) {
     return value.size() <= 4096 && value.find_first_not_of(L"0123456789abcdef:,;") == std::wstring::npos;
@@ -99,6 +115,7 @@ void NppMarkdownNext::Init(HINSTANCE hInst, NppData nppData) {
     m_configPath = std::wstring(configDir) + L"\\NppMarkdownNext.ini";
     m_tableWidthsPath = std::wstring(configDir) + L"\\NppMarkdownNext.tables.ini";
     m_config.Load(m_configPath);
+    m_restorePanelOnStartup = m_config.isPanelVisible;
     m_config.isPanelVisible = false;
     m_isPanelVisible = false;
 }
@@ -112,6 +129,8 @@ void NppMarkdownNext::OnNppReady() {
     if (cmdBiDi > 0) SendMessage(m_nppData._nppHandle, NPPM_SETMENUITEMCHECK, (WPARAM)cmdBiDi, (LPARAM)(m_config.isSmartBiDiEnabled ? TRUE : FALSE));
 
     SyncThemeMenuItems();
+    // With auto-show on, the tab decides; otherwise reopen the panel that was open at the last exit.
+    if (!m_config.autoShowPanel && m_restorePanelOnStartup) SetPanelVisible(true);
     OnBufferActivated();
 }
 
@@ -140,7 +159,7 @@ void NppMarkdownNext::Cleanup() {
     m_queuedExportRequestId.clear();
     m_pendingExportWarnings.clear();
     ++m_viewerGeneration;
-    if (m_hPanel) KillTimer(m_hPanel, IDT_RENDER_DEBOUNCE);
+    if (m_hPanel) { KillTimer(m_hPanel, IDT_RENDER_DEBOUNCE); KillTimer(m_hPanel, IDT_VIEWER_LOADING); }
     SaveConfig(false);
     m_webViewViewer.Close();
     if (m_hPanel && IsWindow(m_hPanel)) {
@@ -149,6 +168,7 @@ void NppMarkdownNext::Cleanup() {
     }
     m_hViewerStatus = nullptr;
     m_hRetryViewer = nullptr;
+    if (m_statusFont) { DeleteObject(m_statusFont); m_statusFont = nullptr; m_statusFontDpi = 0; }
     m_isPanelRegistered = false;
     m_isPanelVisible = false;
 }
@@ -197,12 +217,12 @@ bool NppMarkdownNext::CreatePanelWindow() {
         m_hPanel, nullptr, m_hInst, nullptr);
     m_hRetryViewer = CreateWindowExW(0, L"BUTTON", L"Retry preview", WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
         16, 96, 120, 30, m_hPanel, reinterpret_cast<HMENU>(IDC_RETRY_VIEWER), m_hInst, nullptr);
-    SendMessage(m_hViewerStatus, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
-    SendMessage(m_hRetryViewer, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+    UpdateStatusFont();
 
     m_webViewViewer.SetPageReadyCallback([this]() {
         if (m_shuttingDown) return;
         NppLog("WebView2 page ready, executing initial render");
+        KillTimer(m_hPanel, IDT_VIEWER_LOADING);
         m_viewerStatusVisible = false;
         ShowWindow(m_hViewerStatus, SW_HIDE);
         ShowWindow(m_hRetryViewer, SW_HIDE);
@@ -265,15 +285,20 @@ void NppMarkdownNext::LayoutViewerStatus() {
     if (!m_hPanel) return;
     RECT rect = {};
     GetClientRect(m_hPanel, &rect);
+    UpdateStatusFont();
+    const int dpi = static_cast<int>(m_statusFontDpi ? m_statusFontDpi : 96);
+    auto scale = [dpi](int value) { return MulDiv(value, dpi, 96); };
     int width = (std::max)(1L, rect.right - rect.left);
-    int margin = (std::min)(16, width / 8);
-    int buttonWidth = (std::min)(140, (std::max)(1, width - 2 * margin));
-    SetWindowPos(m_hViewerStatus, HWND_TOP, margin, 24, (std::max)(1, width - 2 * margin), 72, SWP_NOACTIVATE);
-    SetWindowPos(m_hRetryViewer, HWND_TOP, (width - buttonWidth) / 2, 108, buttonWidth, 30, SWP_NOACTIVATE);
+    int margin = (std::min)(scale(16), width / 8);
+    int buttonWidth = (std::min)(scale(140), (std::max)(1, width - 2 * margin));
+    SetWindowPos(m_hViewerStatus, HWND_TOP, margin, scale(24), (std::max)(1, width - 2 * margin), scale(72), SWP_NOACTIVATE);
+    SetWindowPos(m_hRetryViewer, HWND_TOP, (width - buttonWidth) / 2, scale(108), buttonWidth, scale(30), SWP_NOACTIVATE);
 }
 
 void NppMarkdownNext::SetViewerStatus(const std::wstring& text, bool retry) {
     m_viewerStatusVisible = true;
+    // A status with Retry is final (an error): the loading timeout must not replace its specific text.
+    if (retry && m_hPanel) KillTimer(m_hPanel, IDT_VIEWER_LOADING);
     SetWindowTextW(m_hViewerStatus, text.c_str());
     EnableWindow(m_hRetryViewer, retry ? TRUE : FALSE);
     LayoutViewerStatus();
@@ -330,10 +355,14 @@ bool NppMarkdownNext::InitializeViewer() {
     if (m_testInitializeViewer) return m_testInitializeViewer();
 #endif
     SetViewerStatus(L"Loading Markdown preview...", false);
+    // Retry stays disabled while loading; a start that never reports back must not leave it disabled forever.
+    SetTimer(m_hPanel, IDT_VIEWER_LOADING, VIEWER_LOADING_TIMEOUT_MS, nullptr);
     m_webViewViewer.SetVisible(false);
     const std::wstring userDataDir = GetViewerDataDirectory();
     if (userDataDir.empty()) {
-        SetViewerStatus(L"The preview cache directory is unavailable. Check TEMP and retry.", true);
+        const DWORD error = GetLastError();
+        SetViewerStatus(L"The preview needs a writable temporary folder, but Windows did not report one (error " + std::to_wstring(error) +
+                        L"). Check that the TEMP environment variable points to an existing folder, then click Retry.", true);
         return false;
     }
     bool started = m_webViewViewer.Initialize(m_hPanel, userDataDir);
@@ -370,12 +399,24 @@ UINT_PTR NppMarkdownNext::GetCurrentBufferId() const {
 
 std::string NppMarkdownNext::GetScintillaText(HWND hSci) const {
     if (!hSci) return "";
-    int length = static_cast<int>(SendMessage(hSci, SCI_GETLENGTH, 0, 0));
-    if (length <= 0) return "";
+    const auto length = static_cast<size_t>(SendMessage(hSci, SCI_GETLENGTH, 0, 0));
+    if (length == 0) return "";
 
     std::string buffer(length + 1, '\0');
     SendMessage(hSci, SCI_GETTEXT, length + 1, (LPARAM)&buffer[0]);
     buffer.resize(length);
+    // Notepad++ keeps "ANSI" documents in the system code page (Scintilla code page 0) and DBCS ones in theirs;
+    // the reader and the exporter expect UTF-8, so convert instead of showing a Windows-1251 file as mojibake.
+    const auto codePage = static_cast<UINT>(SendMessage(hSci, SCI_GETCODEPAGE, 0, 0));
+    if (codePage != SC_CP_UTF8 && length <= static_cast<size_t>(INT_MAX)) {
+        const UINT source = codePage == 0 ? CP_ACP : codePage;
+        const int wideLength = MultiByteToWideChar(source, 0, buffer.data(), static_cast<int>(length), nullptr, 0);
+        if (wideLength > 0) {
+            std::wstring wide(static_cast<size_t>(wideLength), L'\0');
+            MultiByteToWideChar(source, 0, buffer.data(), static_cast<int>(length), wide.data(), wideLength);
+            return BiDiEngine::WideToUtf8(wide);
+        }
+    }
     return buffer;
 }
 
@@ -412,6 +453,7 @@ void NppMarkdownNext::SetPanelVisible(bool visible) {
     if (!visible && !m_isPanelRegistered) return;
     EnsurePanelRegistered();
     m_isPanelVisible = visible;
+    m_config.isPanelVisible = visible;
     SendMessage(m_nppData._nppHandle, visible ? NPPM_DMMSHOW : NPPM_DMMHIDE, 0, (LPARAM)m_hPanel);
 
     int cmdId = GetPluginCmdId(CMD_TOGGLE_PANEL);
@@ -571,6 +613,10 @@ void NppMarkdownNext::OnSettingsMessage(const std::wstring& message) {
             return;
         }
     }
+    if (message.starts_with(L"openLink:")) {
+        OpenLink(message.substr(9));
+        return;
+    }
     if (message.starts_with(L"tableWidths:")) {
         SaveTableWidths(message.substr(12));
         return;
@@ -707,6 +753,14 @@ void NppMarkdownNext::SaveAsHtml(const std::wstring& requestId) {
     MarkdownDocument doc = MarkdownParser::Parse(wideText);
 
     wchar_t fileName[MAX_PATH] = L"export.html";
+    // Suggest the document's own name (report.md -> report.html) instead of a generic one.
+    {
+        std::wstring base = PathFindFileNameW(GetCurrentBufferPath().c_str());
+        const size_t dot = base.find_last_of(L'.');
+        if (dot != std::wstring::npos && dot > 0) base.resize(dot);
+        std::erase_if(base, [](wchar_t c) { return c < 32 || wcschr(L"\\/:*?\"<>|", c) != nullptr; });
+        if (!base.empty() && base.size() + 5 < MAX_PATH) wcscpy_s(fileName, (base + L".html").c_str());
+    }
     OPENFILENAMEW ofn = { sizeof(OPENFILENAMEW) };
     ofn.hwndOwner = m_hPanel ? m_hPanel : m_nppData._nppHandle;
     ofn.lpstrFilter = L"HTML Document (*.html;*.htm)\0*.html;*.htm\0All Files (*.*)\0*.*\0";
@@ -751,9 +805,20 @@ void NppMarkdownNext::ShowAbout() {
 
 void NppMarkdownNext::RequestRenderDebounced(bool force) {
     if (m_shuttingDown || !m_isPanelVisible) return;
-    if (!force && !IsCurrentBufferMarkdown()) return;
+    // Edits keep the document on screen live, even one the user opened by hand (a Markdown-like .txt);
+    // only an unrelated non-Markdown tab is left alone.
+    if (!force && !IsCurrentBufferMarkdown() && m_webViewViewer.RenderedBufferId() != std::to_wstring(GetCurrentBufferId())) return;
     m_forceRenderPending = m_forceRenderPending || force;
-    if (!SetTimer(m_hPanel, IDT_RENDER_DEBOUNCE, m_forceRenderPending ? 1 : RENDER_DEBOUNCE_DELAY_MS, nullptr)) {
+    // Large documents wait a little longer between keystrokes: each render copies, converts and re-parses the
+    // whole buffer, so typing in a 1 MB file renders after ~300 ms of quiet instead of every 50 ms.
+    UINT delay = RENDER_DEBOUNCE_DELAY_MS;
+    if (!m_forceRenderPending) {
+        if (HWND hSci = GetCurrentScintilla()) {
+            const auto length = static_cast<ULONGLONG>(SendMessage(hSci, SCI_GETLENGTH, 0, 0));
+            delay += static_cast<UINT>((std::min)(350ULL, length / 4096));
+        }
+    }
+    if (!SetTimer(m_hPanel, IDT_RENDER_DEBOUNCE, m_forceRenderPending ? 1 : delay, nullptr)) {
         NppLog("Render timer could not be scheduled error=%u", (unsigned)GetLastError());
     }
 }
@@ -763,14 +828,17 @@ bool NppMarkdownNext::ExecuteRender(bool force) {
     if (!hSci) return false;
 
     const ULONGLONG sourceRevision = m_sourceRevision;
-    std::string utf8Content = GetScintillaText(hSci);
     int caretLine = m_config.syncWithCaret ? GetScintillaCaretLine(hSci) : -1;
-
-    if (!force && utf8Content == m_lastRawContentUtf8 && m_sourceRevision == m_lastRenderedSourceRevision) {
-        if (m_config.syncWithCaret && caretLine >= 0) {
-            m_webViewViewer.ScrollToLine(caretLine);
-        }
+    auto followCaret = [&]() {
+        if (m_config.syncWithCaret && caretLine >= 0) m_webViewViewer.ScrollToLine(caretLine);
         return true;
+    };
+    // Every edit bumps the revision: an unchanged revision needs no copy of a possibly large buffer.
+    if (!force && sourceRevision == m_lastRenderedSourceRevision) return followCaret();
+    std::string utf8Content = GetScintillaText(hSci);
+    if (!force && utf8Content == m_lastRawContentUtf8) {
+        m_lastRenderedSourceRevision = sourceRevision; // e.g. an edit that was undone: the preview already matches
+        return followCaret();
     }
 
     std::wstring currentPath = GetCurrentBufferPath();
@@ -779,8 +847,11 @@ bool NppMarkdownNext::ExecuteRender(bool force) {
 
     bool isDark = IsDarkThemeEffective();
     const std::wstring bufferId = std::to_wstring(GetCurrentBufferId());
+    const size_t folderEnd = currentPath.find_last_of(L'\\');
+    // keep the separator of a drive root: "C:" alone would mean that drive's current directory
+    m_webViewViewer.SetDocumentFolder(folderEnd == std::wstring::npos ? L"" : currentPath.substr(0, folderEnd == 2 ? 3 : folderEnd));
     // Forced renders (tab switch, panel shown, page reload) refresh the saved widths; typing renders keep the reader's copy.
-    if (force && currentPath.find(L'\\') != std::wstring::npos) m_webViewViewer.SetTableWidths(bufferId, LoadTableWidths(currentPath));
+    if (force && folderEnd != std::wstring::npos) m_webViewViewer.SetTableWidths(bufferId, LoadTableWidths(currentPath));
 
     if (m_webViewViewer.UpdateMarkdown(utf8Content, docTitle, isDark, m_config.isSmartBiDiEnabled, caretLine, bufferId)) {
         m_lastRawContentUtf8 = utf8Content;
@@ -807,7 +878,10 @@ void NppMarkdownNext::SaveTableWidths(const std::wstring& message) {
     if (colon == 0 || colon == std::wstring::npos || colon > 20 ||
         message.find_first_not_of(L"0123456789") != colon || m_tableWidthsPath.empty()) return;
     const std::wstring value = message.substr(colon + 1);
-    if (!IsTableWidthsValue(value)) return;
+    if (!IsTableWidthsValue(value)) {
+        m_webViewViewer.PostNotice(L"Too many resized columns to remember for this document; double-click a column edge to reset some.");
+        return;
+    }
     const auto bufferId = static_cast<WPARAM>(std::wcstoull(message.substr(0, colon).c_str(), nullptr, 10));
     const LRESULT length = SendMessage(m_nppData._nppHandle, NPPM_GETFULLPATHFROMBUFFERID, bufferId, 0);
     if (length <= 0 || length > 32767) return;
@@ -826,13 +900,128 @@ void NppMarkdownNext::SaveTableWidths(const std::wstring& message) {
     }
 }
 
+// A link clicked in the preview (the reader routes every non-anchor link here).
+// Web and mail links open in the default app. Local targets resolve against the document's folder: folders open
+// in Explorer, documents/images in their default app, everything else in Notepad++ (as text, so a link can never
+// run a program).
+void NppMarkdownNext::OpenLink(const std::wstring& href) {
+    if (href.empty() || href.size() > 4096 || href.find_first_of(L"\r\n") != std::wstring::npos) return;
+    std::wstring lower = href;
+    CharLowerBuffW(lower.data(), static_cast<DWORD>(lower.size()));
+    if (lower.starts_with(L"http://") || lower.starts_with(L"https://") || lower.starts_with(L"mailto:")) {
+        ShellExecuteW(nullptr, L"open", href.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        return;
+    }
+    std::wstring target;
+    if (lower.starts_with(L"file:")) {
+        std::wstring path(4096, L'\0');
+        DWORD length = static_cast<DWORD>(path.size());
+        if (FAILED(PathCreateFromUrlW(href.c_str(), path.data(), &length, 0))) return;
+        path.resize(length);
+        target = path;
+    } else {
+        // another scheme (tel:, ftp:, app protocols) is not opened from a document; "C:\..." is a drive, not a scheme,
+        // and "page.md?a=b:c" has no scheme (only letters, digits, + . - may precede it)
+        size_t scheme = 0;
+        while (scheme < lower.size() && (iswalnum(lower[scheme]) || lower[scheme] == L'+' || lower[scheme] == L'.' || lower[scheme] == L'-')) ++scheme;
+        if (scheme > 1 && scheme < lower.size() && lower[scheme] == L':' && iswalpha(lower[0])) {
+            m_webViewViewer.PostNotice(L"This kind of link is not opened from the preview: " + href);
+            return;
+        }
+        target = href.substr(0, href.find_first_of(L"#?"));
+        if (target.empty()) return;
+        DWORD length = static_cast<DWORD>(target.size() + 1);
+        UrlUnescapeW(target.data(), nullptr, &length, URL_UNESCAPE_INPLACE | URL_UNESCAPE_AS_UTF8);
+        target.resize(wcslen(target.c_str()));
+        std::replace(target.begin(), target.end(), L'/', L'\\');
+    }
+    if (PathIsRelativeW(target.c_str())) {
+        const std::wstring document = GetCurrentBufferPath();
+        const size_t folderEnd = document.find_last_of(L'\\');
+        if (folderEnd == std::wstring::npos) {
+            m_webViewViewer.PostNotice(L"Save the document first: relative links are resolved from its folder.");
+            return;
+        }
+        target = document.substr(0, folderEnd + 1) + target;
+    }
+    std::wstring full(32768, L'\0');
+    const DWORD fullLength = GetFullPathNameW(target.c_str(), static_cast<DWORD>(full.size()), full.data(), nullptr);
+    if (!fullLength || fullLength >= full.size()) return;
+    full.resize(fullLength);
+    // Touching \\server\... makes Windows authenticate to that server (NTLM): a link in someone else's Markdown
+    // must not reach an arbitrary host. Allowed only within the share the document itself was opened from.
+    // Any "\\" prefix counts: \\server\share, \\?\UNC\..., \\.\device.
+    if (full.starts_with(L"\\\\") && !IsOnSameShare(full, GetCurrentBufferPath())) {
+        m_webViewViewer.PostNotice(L"Links to network locations are not opened from the preview: " + full);
+        return;
+    }
+    const DWORD attributes = GetFileAttributesW(full.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        m_webViewViewer.PostNotice(L"The linked file was not found: " + full);
+        return;
+    }
+    if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
+        ShellExecuteW(nullptr, L"explore", full.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        return;
+    }
+    std::wstring extension = PathFindExtensionW(full.c_str());
+    CharLowerBuffW(extension.data(), static_cast<DWORD>(extension.size()));
+    // No .svg (a browser would run its script) and no macro-capable legacy Office formats: those open as text.
+    static constexpr const wchar_t* kDefaultApp[] = {L".pdf", L".png", L".jpg", L".jpeg", L".gif", L".bmp", L".webp",
+        L".docx", L".xlsx", L".pptx", L".odt", L".ods", L".odp"};
+    if (std::any_of(std::begin(kDefaultApp), std::end(kDefaultApp), [&](const wchar_t* known) { return extension == known; }))
+        ShellExecuteW(nullptr, L"open", full.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    else
+        SendMessage(m_nppData._nppHandle, NPPM_DOOPEN, 0, reinterpret_cast<LPARAM>(full.c_str()));
+}
+
+// The loading/error surface follows the editor's own colors and the monitor's DPI.
+COLORREF NppMarkdownNext::StatusColor(bool background) const {
+    if (m_nppData._nppHandle) {
+        const auto back = static_cast<COLORREF>(SendMessage(m_nppData._nppHandle, NPPM_GETEDITORDEFAULTBACKGROUNDCOLOR, 0, 0));
+        const auto fore = static_cast<COLORREF>(SendMessage(m_nppData._nppHandle, NPPM_GETEDITORDEFAULTFOREGROUNDCOLOR, 0, 0));
+        // An older Notepad++ answers 0 to both: equal colors mean "unknown", not black on black.
+        if (back != fore) return background ? back : fore;
+    }
+    const bool dark = IsDarkThemeEffective();
+    return background ? (dark ? RGB(30, 30, 30) : RGB(255, 255, 255)) : (dark ? RGB(235, 235, 235) : RGB(25, 25, 25));
+}
+
+void NppMarkdownNext::UpdateStatusFont() {
+    if (!m_hPanel || !m_hViewerStatus || !m_hRetryViewer) return;
+    using GetDpiForWindowFn = UINT (WINAPI*)(HWND);
+    using SystemParametersInfoForDpiFn = BOOL (WINAPI*)(UINT, UINT, PVOID, UINT, UINT);
+    // Resolved at run time: both exist from Windows 10 1607, Notepad++ still loads plugins on older systems.
+    static const auto getDpi = reinterpret_cast<GetDpiForWindowFn>(GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForWindow"));
+    static const auto metricsForDpi = reinterpret_cast<SystemParametersInfoForDpiFn>(GetProcAddress(GetModuleHandleW(L"user32.dll"), "SystemParametersInfoForDpi"));
+    UINT dpi = getDpi ? getDpi(m_hPanel) : 96;
+    if (!dpi) dpi = 96;
+    if (m_statusFont && dpi == m_statusFontDpi) return;
+    NONCLIENTMETRICSW metrics = {};
+    metrics.cbSize = sizeof(metrics);
+    bool haveMetrics = metricsForDpi ? metricsForDpi(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0, dpi) != FALSE
+                                     : SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0) != FALSE;
+    HFONT font = haveMetrics ? CreateFontIndirectW(&metrics.lfMessageFont) : nullptr;
+    if (!font) return;
+    SendMessage(m_hViewerStatus, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+    SendMessage(m_hRetryViewer, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+    if (m_statusFont) DeleteObject(m_statusFont);
+    m_statusFont = font;
+    m_statusFontDpi = dpi;
+}
+
 void NppMarkdownNext::HandleCheckboxToggle(const CheckboxRequest& request) {
     if (m_shuttingDown || !m_isNppReady) return;
     auto reject = [this]() { RequestRenderDebounced(true); };
     HWND hSci = GetCurrentScintilla();
+    if (hSci && SendMessage(hSci, SCI_GETREADONLY, 0, 0)) {
+        m_webViewViewer.PostNotice(L"This file is read-only in Notepad++, so the task was not changed.");
+        reject();
+        return;
+    }
+    // A stale preview simply re-renders: the user sees the current state and can click again.
     if (!hSci || !m_webViewViewer.IsCurrentRender(request) || request.bufferId != std::to_wstring(GetCurrentBufferId()) ||
-        m_sourceRevision != m_lastRenderedSourceRevision || SendMessage(hSci, SCI_GETREADONLY, 0, 0) ||
-        GetScintillaText(hSci) != m_lastRawContentUtf8) {
+        m_sourceRevision != m_lastRenderedSourceRevision || GetScintillaText(hSci) != m_lastRawContentUtf8) {
         reject();
         return;
     }
@@ -854,8 +1043,11 @@ void NppMarkdownNext::HandleCheckboxToggle(const CheckboxRequest& request) {
     }
 
     ++m_sourceRevision;
+    // The marker is replaced by text of the same length, so the user's selection keeps its offsets.
+    const auto anchor = SendMessage(hSci, SCI_GETANCHOR, 0, 0), caret = SendMessage(hSci, SCI_GETCURRENTPOS, 0, 0);
     SendMessage(hSci, SCI_SETSEL, lineStart + request.markerColumn, lineStart + request.markerColumn + 3);
     SendMessage(hSci, SCI_REPLACESEL, 0, reinterpret_cast<LPARAM>(request.expectedState == ' ' ? "[x]" : "[ ]"));
+    SendMessage(hSci, SCI_SETSEL, anchor, caret);
     RequestRenderDebounced(true);
 }
 
@@ -954,6 +1146,7 @@ LRESULT CALLBACK NppMarkdownNext::PanelWndProc(HWND hwnd, UINT msg, WPARAM wPara
             NMHDR* pnm = reinterpret_cast<NMHDR*>(lParam);
             if (pnm && pnm->code == DMN_CLOSE) {
                 self->m_isPanelVisible = false;
+                self->m_config.isPanelVisible = false;
                 self->m_userClosedPanel = true;
                 KillTimer(hwnd, IDT_RENDER_DEBOUNCE);
                 self->m_forceRenderPending = false;
@@ -972,6 +1165,12 @@ LRESULT CALLBACK NppMarkdownNext::PanelWndProc(HWND hwnd, UINT msg, WPARAM wPara
                 KillTimer(hwnd, IDT_RENDER_DEBOUNCE);
                 bool force = std::exchange(self->m_forceRenderPending, false);
                 if (!self->m_shuttingDown && self->m_isPanelVisible) self->ExecuteRender(force);
+                return 0;
+            }
+            if (wParam == IDT_VIEWER_LOADING) {
+                KillTimer(hwnd, IDT_VIEWER_LOADING);
+                if (!self->m_shuttingDown && self->m_viewerStatusVisible && !self->m_webViewViewer.IsPageReady())
+                    self->SetViewerStatus(L"The preview is taking longer than usual to start. Click Retry to restart it.", true);
                 return 0;
             }
             break;
@@ -1017,16 +1216,18 @@ LRESULT CALLBACK NppMarkdownNext::PanelWndProc(HWND hwnd, UINT msg, WPARAM wPara
 
         case WM_CTLCOLORSTATIC: {
             HDC dc = reinterpret_cast<HDC>(wParam);
-            bool dark = self->IsDarkThemeEffective();
-            SetTextColor(dc, dark ? RGB(235, 235, 235) : RGB(25, 25, 25));
-            SetBkColor(dc, dark ? RGB(0, 0, 0) : RGB(255, 255, 255));
-            return reinterpret_cast<LRESULT>(GetStockObject(dark ? BLACK_BRUSH : WHITE_BRUSH));
+            SetTextColor(dc, self->StatusColor(false));
+            SetBkColor(dc, self->StatusColor(true));
+            SetDCBrushColor(dc, self->StatusColor(true));
+            return reinterpret_cast<LRESULT>(GetStockObject(DC_BRUSH));
         }
 
         case WM_ERASEBKGND: {
             RECT rect;
             GetClientRect(hwnd, &rect);
-            FillRect(reinterpret_cast<HDC>(wParam), &rect, static_cast<HBRUSH>(GetStockObject(self->IsDarkThemeEffective() ? BLACK_BRUSH : WHITE_BRUSH)));
+            HDC dc = reinterpret_cast<HDC>(wParam);
+            SetDCBrushColor(dc, self->StatusColor(true));
+            FillRect(dc, &rect, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
             return TRUE;
         }
 
