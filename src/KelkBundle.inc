@@ -3406,7 +3406,8 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
         if (m) return {type: 'footnoteDef', raw: m[0], id: m[1], tokens: this.lexer.inlineTokens(m[2].replace(/\n[ \t]+/g, ' '))};
       },
       renderer: function(token) {
-        if (footnotes && !(token.id in footnotes.notes)) footnotes.notes[token.id] = this.parser.parseInline(token.tokens);
+        if (!footnotes) return '<p>' + escapeHtml(token.raw) + '</p>'; // fallback parse: keep the note visible
+        if (!(token.id in footnotes.notes)) footnotes.notes[token.id] = this.parser.parseInline(token.tokens);
         return '';
       }
     }, {
@@ -7323,7 +7324,8 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
         if (m) return {type: 'footnoteDef', raw: m[0], id: m[1], tokens: this.lexer.inlineTokens(m[2].replace(/\n[ \t]+/g, ' '))};
       },
       renderer: function(token) {
-        if (footnotes && !(token.id in footnotes.notes)) footnotes.notes[token.id] = this.parser.parseInline(token.tokens);
+        if (!footnotes) return '<p>' + escapeHtml(token.raw) + '</p>'; // fallback parse: keep the note visible
+        if (!(token.id in footnotes.notes)) footnotes.notes[token.id] = this.parser.parseInline(token.tokens);
         return '';
       }
     }, {

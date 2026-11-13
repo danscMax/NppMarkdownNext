@@ -207,8 +207,9 @@ function findInPreview() {
 }
 function printPreview() { closeReaderMenu(); if (!postToHost('print')) window.print(); }
 document.addEventListener('keydown', function(event) {
-    if (event.ctrlKey && !event.altKey && !event.shiftKey && (event.key === 'f' || event.key === 'F')) { event.preventDefault(); findInPreview(); }
-    else if (event.ctrlKey && !event.altKey && !event.shiftKey && (event.key === 'p' || event.key === 'P')) { event.preventDefault(); printPreview(); }
+    // event.code is the physical key, so the shortcuts also work on a Russian (or any other) layout
+    if (event.ctrlKey && !event.altKey && !event.shiftKey && event.code === 'KeyF') { event.preventDefault(); findInPreview(); }
+    else if (event.ctrlKey && !event.altKey && !event.shiftKey && event.code === 'KeyP') { event.preventDefault(); printPreview(); }
 });
 
 // ---- Context menu ----------------------------------------------------------------------------------------
@@ -290,6 +291,8 @@ document.addEventListener('scroll', closeReaderMenu, {passive: true, capture: tr
 var readerColumnWidths = new Map();
 // Scroll offsets inside overflowing tables, same keys; kept for the session so an edit does not reset them.
 var readerTableScroll = new Map();
+// Keys of the tables in the document on screen: only these are persisted.
+var readerLaidOutTables = new Set();
 var readerTableObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(markOverflowingTables) : null;
 
 function markOverflowingTables() {
@@ -343,7 +346,8 @@ function persistTableWidths(key) {
     if (!/^\d+$/.test(bufferId)) return;
     var entries = [];
     readerColumnWidths.forEach(function(widths, k) {
-        if (k.indexOf(bufferId + '|') === 0) entries.push(k.slice(bufferId.length + 1) + ':' + widths.join(','));
+        // widths of tables no longer in the document (e.g. an edited header) are dropped instead of piling up
+        if (k.indexOf(bufferId + '|') === 0 && readerLaidOutTables.has(k)) entries.push(k.slice(bufferId.length + 1) + ':' + widths.join(','));
     });
     postToHost('tableWidths:' + bufferId + ':' + entries.join(';'));
 }
@@ -361,11 +365,13 @@ function layoutReaderTables(detail) {
     if (!content) return;
     var bufferId = detail && detail.bufferId || '';
     var seen = Object.create(null), restore = [];
+    readerLaidOutTables = new Set();
     Array.from(content.querySelectorAll('table')).filter(function(table) {
         return table.id !== 'hrdftrtbl' && !table.parentElement.closest('table') && table.rows.length;
     }).forEach(function(table) {
         var cells = Array.from(table.rows[0].cells);
         var key = bufferId + '|' + tableFingerprint(table, seen);
+        readerLaidOutTables.add(key);
         var wrap = table.parentElement;
         if (!wrap.classList.contains('reader-table-wrap')) {
             wrap = document.createElement('div');
@@ -409,10 +415,13 @@ function documentRelativeUrl(src, base) {
         var segment = segments[i];
         if (!segment || segment === '.') continue;
         if (segment === '..') { if (!parts.length) return null; parts.pop(); continue; }
-        parts.push(segment);
+        var decoded = segment;
+        try { decoded = decodeURIComponent(segment); } catch (e) {}
+        if (/[\\/]/.test(decoded) || decoded === '..' || decoded === '.') return null; // an encoded separator must not climb
+        parts.push(decoded);
     }
     if (!parts.length) return null;
-    return base + parts.map(function(part) { try { part = decodeURIComponent(part); } catch (e) {} return encodeURIComponent(part); }).join('/');
+    return base + parts.map(encodeURIComponent).join('/');
 }
 function resolveDocumentImages(detail) {
     var base = detail && detail.docBase || '';

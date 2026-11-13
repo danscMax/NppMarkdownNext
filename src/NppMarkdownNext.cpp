@@ -297,6 +297,8 @@ void NppMarkdownNext::LayoutViewerStatus() {
 
 void NppMarkdownNext::SetViewerStatus(const std::wstring& text, bool retry) {
     m_viewerStatusVisible = true;
+    // A status with Retry is final (an error): the loading timeout must not replace its specific text.
+    if (retry && m_hPanel) KillTimer(m_hPanel, IDT_VIEWER_LOADING);
     SetWindowTextW(m_hViewerStatus, text.c_str());
     EnableWindow(m_hRetryViewer, retry ? TRUE : FALSE);
     LayoutViewerStatus();
@@ -846,7 +848,8 @@ bool NppMarkdownNext::ExecuteRender(bool force) {
     bool isDark = IsDarkThemeEffective();
     const std::wstring bufferId = std::to_wstring(GetCurrentBufferId());
     const size_t folderEnd = currentPath.find_last_of(L'\\');
-    m_webViewViewer.SetDocumentFolder(folderEnd == std::wstring::npos ? L"" : currentPath.substr(0, folderEnd));
+    // keep the separator of a drive root: "C:" alone would mean that drive's current directory
+    m_webViewViewer.SetDocumentFolder(folderEnd == std::wstring::npos ? L"" : currentPath.substr(0, folderEnd == 2 ? 3 : folderEnd));
     // Forced renders (tab switch, panel shown, page reload) refresh the saved widths; typing renders keep the reader's copy.
     if (force && folderEnd != std::wstring::npos) m_webViewViewer.SetTableWidths(bufferId, LoadTableWidths(currentPath));
 
@@ -875,7 +878,10 @@ void NppMarkdownNext::SaveTableWidths(const std::wstring& message) {
     if (colon == 0 || colon == std::wstring::npos || colon > 20 ||
         message.find_first_not_of(L"0123456789") != colon || m_tableWidthsPath.empty()) return;
     const std::wstring value = message.substr(colon + 1);
-    if (!IsTableWidthsValue(value)) return;
+    if (!IsTableWidthsValue(value)) {
+        m_webViewViewer.PostNotice(L"Too many resized columns to remember for this document; double-click a column edge to reset some.");
+        return;
+    }
     const auto bufferId = static_cast<WPARAM>(std::wcstoull(message.substr(0, colon).c_str(), nullptr, 10));
     const LRESULT length = SendMessage(m_nppData._nppHandle, NPPM_GETFULLPATHFROMBUFFERID, bufferId, 0);
     if (length <= 0 || length > 32767) return;
@@ -914,9 +920,11 @@ void NppMarkdownNext::OpenLink(const std::wstring& href) {
         path.resize(length);
         target = path;
     } else {
-        const size_t colon = lower.find(L':'), slash = lower.find_first_of(L"/\\");
-        // another scheme (tel:, ftp:, app protocols): not opened from a document; "C:\..." is a drive, not a scheme
-        if (colon != std::wstring::npos && colon > 1 && (slash == std::wstring::npos || colon < slash)) {
+        // another scheme (tel:, ftp:, app protocols) is not opened from a document; "C:\..." is a drive, not a scheme,
+        // and "page.md?a=b:c" has no scheme (only letters, digits, + . - may precede it)
+        size_t scheme = 0;
+        while (scheme < lower.size() && (iswalnum(lower[scheme]) || lower[scheme] == L'+' || lower[scheme] == L'.' || lower[scheme] == L'-')) ++scheme;
+        if (scheme > 1 && scheme < lower.size() && lower[scheme] == L':' && iswalpha(lower[0])) {
             m_webViewViewer.PostNotice(L"This kind of link is not opened from the preview: " + href);
             return;
         }
@@ -942,7 +950,8 @@ void NppMarkdownNext::OpenLink(const std::wstring& href) {
     full.resize(fullLength);
     // Touching \\server\... makes Windows authenticate to that server (NTLM): a link in someone else's Markdown
     // must not reach an arbitrary host. Allowed only within the share the document itself was opened from.
-    if (PathIsUNCW(full.c_str()) && !IsOnSameShare(full, GetCurrentBufferPath())) {
+    // Any "\\" prefix counts: \\server\share, \\?\UNC\..., \\.\device.
+    if (full.starts_with(L"\\\\") && !IsOnSameShare(full, GetCurrentBufferPath())) {
         m_webViewViewer.PostNotice(L"Links to network locations are not opened from the preview: " + full);
         return;
     }
@@ -957,8 +966,9 @@ void NppMarkdownNext::OpenLink(const std::wstring& href) {
     }
     std::wstring extension = PathFindExtensionW(full.c_str());
     CharLowerBuffW(extension.data(), static_cast<DWORD>(extension.size()));
-    static constexpr const wchar_t* kDefaultApp[] = {L".pdf", L".png", L".jpg", L".jpeg", L".gif", L".bmp", L".webp", L".svg",
-        L".doc", L".docx", L".xls", L".xlsx", L".ppt", L".pptx", L".odt", L".ods", L".odp"};
+    // No .svg (a browser would run its script) and no macro-capable legacy Office formats: those open as text.
+    static constexpr const wchar_t* kDefaultApp[] = {L".pdf", L".png", L".jpg", L".jpeg", L".gif", L".bmp", L".webp",
+        L".docx", L".xlsx", L".pptx", L".odt", L".ods", L".odp"};
     if (std::any_of(std::begin(kDefaultApp), std::end(kDefaultApp), [&](const wchar_t* known) { return extension == known; }))
         ShellExecuteW(nullptr, L"open", full.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     else
