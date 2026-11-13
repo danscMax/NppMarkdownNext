@@ -260,6 +260,7 @@ function openReaderMenu(x, y, target) {
         button.disabled = !!item.disabled;
         var label = document.createElement('span');
         label.textContent = item.label;
+        label.title = item.label; // readable in full when a narrow panel ellipsizes it
         button.append(label);
         if (item.key) { var key = document.createElement('span'); key.className = 'reader-menu-key'; key.textContent = item.key; button.append(key); }
         button.addEventListener('click', function(event) { event.stopPropagation(); closeReaderMenu(); item.run(); });
@@ -438,7 +439,13 @@ function resolveDocumentImages(detail) {
     var base = detail && detail.docBase || '';
     document.querySelectorAll('#content img[src]').forEach(function(image) {
         var url = documentRelativeUrl(image.getAttribute('src'), base);
-        if (url) image.src = url;
+        if (!url) return;
+        // The host maps the folder just before the first render; a request that races the mapping fails once.
+        // One delayed retry covers that without looping on a file that is really missing.
+        image.addEventListener('error', function() {
+            setTimeout(function() { if (image.isConnected) { image.removeAttribute('src'); image.src = url; } }, 400);
+        }, {once: true});
+        image.src = url;
     });
 }
 
