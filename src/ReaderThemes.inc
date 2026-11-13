@@ -935,6 +935,8 @@ if (window.chrome && window.chrome.webview) {
             applyReaderSettings(data);
         } else if (data.type === 'operationResult') {
             showOperationResult(data);
+        } else if (data.type === 'tableWidths') {
+            receiveTableWidths(String(data.bufferId || ''), String(data.value || ''));
         }
     });
 }
@@ -971,8 +973,8 @@ function initializeReaderSettings() {
     if (window.readerDocumentIndex) { updateReaderOutline(window.readerDocumentIndex); layoutReaderTables(window.readerDocumentIndex); }
     applyContentTypography();
 }
-// Column widths the user dragged, kept across re-renders of the same buffer for this session.
-// shortcut: keyed by table position + column count, so inserting a table above shifts the widths; persist in config if that matters.
+// Column widths the user dragged: "bufferId|tableFingerprint" -> [px]. The native host persists them per file
+// (tableWidths messages both ways), so they survive re-renders and Notepad++ restarts.
 var readerColumnWidths = new Map();
 var readerTableObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(markOverflowingTables) : null;
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initializeReaderSettings);
@@ -1007,26 +1009,56 @@ function startColumnResize(event, table, key, column) {
         grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', end); grip.removeEventListener('pointercancel', end);
         grip.classList.remove('active');
         document.body.classList.remove('reader-col-resizing');
-        readerColumnWidths.delete(key); readerColumnWidths.set(key, widths.slice());
-        while (readerColumnWidths.size > 200) readerColumnWidths.delete(readerColumnWidths.keys().next().value);
+        readerColumnWidths.set(key, widths.slice());
+        persistTableWidths(key);
         markOverflowingTables();
     }
     grip.addEventListener('pointermove', move); grip.addEventListener('pointerup', end); grip.addEventListener('pointercancel', end);
+}
+// A table is identified by its header text (+ the column count and its occurrence among same-header tables),
+// so widths follow the table when other tables are added or removed around it.
+function tableFingerprint(table, seen) {
+    var text = Array.from(table.rows[0].cells).map(function(cell) { return cell.textContent.trim(); }).join('\u0001');
+    seen[text] = (seen[text] || 0) + 1;
+    text += '\u0002' + table.rows[0].cells.length + '\u0002' + seen[text];
+    var hash = 0x811c9dc5;
+    for (var i = 0; i < text.length; i++) { hash ^= text.charCodeAt(i); hash = Math.imul(hash, 0x01000193) >>> 0; }
+    return ('0000000' + hash.toString(16)).slice(-8);
+}
+// Wire format (validated natively): "fp:w,w,...;fp:w,..." with fp = 8 hex digits.
+function persistTableWidths(key) {
+    var bufferId = key.slice(0, key.indexOf('|'));
+    if (!/^\d+$/.test(bufferId) || !window.chrome || !window.chrome.webview) return;
+    var entries = [];
+    readerColumnWidths.forEach(function(widths, k) {
+        if (k.indexOf(bufferId + '|') === 0) entries.push(k.slice(bufferId.length + 1) + ':' + widths.join(','));
+    });
+    window.chrome.webview.postMessage('tableWidths:' + bufferId + ':' + entries.join(';'));
+}
+function receiveTableWidths(bufferId, value) {
+    if (!/^\d+$/.test(bufferId) || !/^[0-9a-f:,;]*$/.test(value)) return;
+    Array.from(readerColumnWidths.keys()).forEach(function(k) { if (k.indexOf(bufferId + '|') === 0) readerColumnWidths.delete(k); });
+    value.split(';').forEach(function(entry) {
+        var match = /^([0-9a-f]{8}):(\d{1,4}(?:,\d{1,4})*)$/.exec(entry);
+        if (match) readerColumnWidths.set(bufferId + '|' + match[1], match[2].split(',').map(Number));
+    });
+    if (window.readerDocumentIndex && window.readerDocumentIndex.bufferId === bufferId) layoutReaderTables(window.readerDocumentIndex);
 }
 function layoutReaderTables(detail) {
     var content = document.getElementById('content');
     if (!content) return;
     var bufferId = detail && detail.bufferId || '';
+    var seen = Object.create(null);
     Array.from(content.querySelectorAll('table')).filter(function(table) {
         return table.id !== 'hrdftrtbl' && !table.parentElement.closest('table') && table.rows.length;
-    }).forEach(function(table, index) {
+    }).forEach(function(table) {
         if (!table.parentElement.classList.contains('reader-table-wrap')) {
             var wrap = document.createElement('div');
             wrap.className = 'reader-table-wrap';
             table.before(wrap); wrap.appendChild(table);
         }
         var cells = Array.from(table.rows[0].cells);
-        var key = bufferId + '|' + index + '|' + cells.length;
+        var key = bufferId + '|' + tableFingerprint(table, seen);
         cells.forEach(function(cell, column) {
             if (cell.querySelector(':scope > .reader-col-grip')) return;
             var grip = document.createElement('span');
@@ -1034,11 +1066,11 @@ function layoutReaderTables(detail) {
             grip.title = 'Drag to resize the column, double-click to reset';
             grip.setAttribute('aria-hidden', 'true');
             grip.addEventListener('pointerdown', function(e) { startColumnResize(e, table, key, column); });
-            grip.addEventListener('dblclick', function(e) { e.stopPropagation(); readerColumnWidths.delete(key); applyColumnWidths(table, null); markOverflowingTables(); });
+            grip.addEventListener('dblclick', function(e) { e.stopPropagation(); readerColumnWidths.delete(key); applyColumnWidths(table, null); persistTableWidths(key); markOverflowingTables(); });
             cell.appendChild(grip);
         });
         var saved = readerColumnWidths.get(key);
-        if (saved) applyColumnWidths(table, saved);
+        applyColumnWidths(table, saved && saved.length === cells.length ? saved : null);
     });
     if (readerTableObserver) readerTableObserver.observe(document.getElementById('reader-wrap'));
     markOverflowingTables();

@@ -61,6 +61,22 @@ struct ExportScope {
     std::function<void()> finish;
     ~ExportScope() { finish(); }
 };
+
+// Reader column widths are stored per document under a hash of its case-folded path:
+// INI keys cannot carry every path character ('=', ';', '[').
+std::wstring TableWidthsKey(std::wstring path) {
+    CharLowerBuffW(path.data(), static_cast<DWORD>(path.size()));
+    uint64_t hash = 1469598103934665603ULL;
+    for (wchar_t c : path) { hash ^= static_cast<uint16_t>(c); hash *= 1099511628211ULL; }
+    wchar_t key[17] = {};
+    swprintf(key, 17, L"%016llx", static_cast<unsigned long long>(hash));
+    return key;
+}
+
+// The reader's wire format "fp:w,w;fp:w" (see persistTableWidths): only these characters, bounded size.
+bool IsTableWidthsValue(const std::wstring& value) {
+    return value.size() <= 4096 && value.find_first_not_of(L"0123456789abcdef:,;") == std::wstring::npos;
+}
 }
 
 NppMarkdownNext& NppMarkdownNext::Instance() {
@@ -81,6 +97,7 @@ void NppMarkdownNext::Init(HINSTANCE hInst, NppData nppData) {
         GetTempPathW(MAX_PATH, configDir);
     }
     m_configPath = std::wstring(configDir) + L"\\NppMarkdownNext.ini";
+    m_tableWidthsPath = std::wstring(configDir) + L"\\NppMarkdownNext.tables.ini";
     m_config.Load(m_configPath);
     m_config.isPanelVisible = false;
     m_isPanelVisible = false;
@@ -554,6 +571,10 @@ void NppMarkdownNext::OnSettingsMessage(const std::wstring& message) {
             return;
         }
     }
+    if (message.starts_with(L"tableWidths:")) {
+        SaveTableWidths(message.substr(12));
+        return;
+    }
     if (message == L"toggleAutoShow") {
         m_config.autoShowPanel = !m_config.autoShowPanel;
         ApplyAutoShowPanel();
@@ -757,14 +778,52 @@ bool NppMarkdownNext::ExecuteRender(bool force) {
     if (docTitle.empty()) docTitle = L"Markdown Reader";
 
     bool isDark = IsDarkThemeEffective();
+    const std::wstring bufferId = std::to_wstring(GetCurrentBufferId());
+    // Forced renders (tab switch, panel shown, page reload) refresh the saved widths; typing renders keep the reader's copy.
+    if (force && currentPath.find(L'\\') != std::wstring::npos) m_webViewViewer.SetTableWidths(bufferId, LoadTableWidths(currentPath));
 
-    if (m_webViewViewer.UpdateMarkdown(utf8Content, docTitle, isDark, m_config.isSmartBiDiEnabled, caretLine,
-                                      std::to_wstring(GetCurrentBufferId()))) {
+    if (m_webViewViewer.UpdateMarkdown(utf8Content, docTitle, isDark, m_config.isSmartBiDiEnabled, caretLine, bufferId)) {
         m_lastRawContentUtf8 = utf8Content;
         m_lastRenderedSourceRevision = sourceRevision;
         return true;
     }
     return false;
+}
+
+std::wstring NppMarkdownNext::LoadTableWidths(const std::wstring& path) const {
+    const std::wstring key = TableWidthsKey(path);
+    if (auto cached = m_tableWidthsCache.find(key); cached != m_tableWidthsCache.end()) return cached->second;
+    if (m_tableWidthsPath.empty()) return L"";
+    std::wstring value(4097, L'\0');
+    value.resize(GetPrivateProfileStringW(L"Widths", key.c_str(), L"", value.data(),
+                                          static_cast<DWORD>(value.size()), m_tableWidthsPath.c_str()));
+    return IsTableWidthsValue(value) ? value : L"";
+}
+
+// message = "<bufferId>:<value>"; an empty value removes the document's entry.
+// shortcut: entries of deleted/renamed files are never pruned (~100 bytes each); add LRU pruning if the file ever grows large.
+void NppMarkdownNext::SaveTableWidths(const std::wstring& message) {
+    const size_t colon = message.find(L':');
+    if (colon == 0 || colon == std::wstring::npos || colon > 20 ||
+        message.find_first_not_of(L"0123456789") != colon || m_tableWidthsPath.empty()) return;
+    const std::wstring value = message.substr(colon + 1);
+    if (!IsTableWidthsValue(value)) return;
+    const auto bufferId = static_cast<WPARAM>(std::wcstoull(message.substr(0, colon).c_str(), nullptr, 10));
+    const LRESULT length = SendMessage(m_nppData._nppHandle, NPPM_GETFULLPATHFROMBUFFERID, bufferId, 0);
+    if (length <= 0 || length > 32767) return;
+    std::wstring path(static_cast<size_t>(length) + 1, L'\0');
+    SendMessage(m_nppData._nppHandle, NPPM_GETFULLPATHFROMBUFFERID, bufferId, reinterpret_cast<LPARAM>(path.data()));
+    path.resize(wcsnlen(path.c_str(), path.size()));
+    if (path.find(L'\\') == std::wstring::npos) return; // unsaved tab: the reader keeps the widths for the session only
+    const std::wstring key = TableWidthsKey(path);
+    m_tableWidthsCache[key] = value;
+    if (!WritePrivateProfileStringW(L"Widths", key.c_str(), value.empty() ? nullptr : value.c_str(), m_tableWidthsPath.c_str())) {
+        const DWORD error = GetLastError();
+        NppLog("SaveTableWidths: write failed error=%lu", error);
+        if (m_webViewViewer.IsPageReady())
+            m_webViewViewer.ReportOperationResult(L"saveSettings", {OperationStatus::Failed, error,
+                L"Column widths apply to this session, but could not be saved. Check the configuration folder permissions."});
+    }
 }
 
 void NppMarkdownNext::HandleCheckboxToggle(const CheckboxRequest& request) {
