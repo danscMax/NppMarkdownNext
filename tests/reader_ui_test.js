@@ -107,7 +107,7 @@ async () => {
     }
     const color = selector => getComputedStyle(document.querySelector(selector)).color;
     await render('# Gold roles\n\n**Bold** *Italic* `inline`\n\n> Quote\n\n[link](https://example.com)\n\n```python\n# author comment\n```\n');
-    for (const [selector, expected] of [['h1','rgb(255, 208, 0)'],['strong','rgb(237, 242, 247)'],['em','rgb(255, 130, 63)'],[':not(pre) > code','rgb(161, 103, 255)'],['blockquote','rgb(228, 172, 115)'],['a','rgb(62, 178, 255)'],['.hljs-comment','rgb(51, 73, 132)']]) {
+    for (const [selector, expected] of [['h1','rgb(255, 208, 0)'],['strong','rgb(237, 242, 247)'],['em','rgb(255, 130, 63)'],[':not(pre) > code','rgb(161, 103, 255)'],['blockquote','rgb(228, 172, 115)'],['a','rgb(62, 178, 255)'],['.hljs-comment','rgb(113, 134, 192)']]) {
         expect(color('#content ' + selector) === expected, 'GoldMarkdownRoles ' + selector);
     }
     expect(color('#content') === 'rgb(184, 196, 228)', 'GoldMarkdownRoles body text');
@@ -131,6 +131,52 @@ async () => {
     expect(moved.rows[0].cells[1].style.width === '200px' && content.querySelector('.reader-table-wrap table').rows[0].cells[1].style.width === '', 'Widths follow their table when another table is inserted above');
     await render(tablesMd, '32');
     expect(firstTable().rows[0].cells[1].style.width === '', 'Resized column widths do not leak into another buffer');
+
+    // Reader tools: context menu, copy helpers, code buttons, outline button, warnings, links
+    await render('Para [site](https://example.com/x) and [plan](notes/plan.md).\n\n| h1 | h2 |\n|---|---|\n| a\tb | c |\n\n```js\nlet x = 1;\n```\n', '33');
+    const menu = document.getElementById('reader-menu');
+    const menuLabels = () => [...menu.querySelectorAll('.reader-menu-item')].map(item => item.firstChild.textContent);
+    content.querySelector('td').dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 40, clientY: 40}));
+    expect(!menu.hidden && menuLabels().includes('Copy table') && !menuLabels().includes('Copy code') && menu.querySelector('.reader-menu-item').disabled, 'Context menu offers table actions; Copy is disabled without a selection');
+    document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
+    expect(menu.hidden, 'Escape closes the context menu');
+    content.querySelector('pre code').dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 9999, clientY: 9999}));
+    const menuBox = menu.getBoundingClientRect();
+    expect(menuLabels().includes('Copy code') && menuBox.right <= window.innerWidth && menuBox.bottom <= window.innerHeight, 'Context menu offers code actions and stays inside the pane');
+    window.__messages.length = 0;
+    [...menu.querySelectorAll('.reader-menu-item')].find(item => item.textContent.startsWith('Find in preview')).click();
+    expect(menu.hidden && window.__messages.includes('find'), 'Find in preview asks the host to open its find bar');
+    const tableData = tableClipboard(content.querySelector('table'));
+    expect(tableData.text === 'h1\th2\na b\tc' && !tableData.html.includes('reader-col-grip') && !tableData.html.includes('data-line'), 'Copy table yields clean HTML and tab-separated text');
+    expect(content.querySelectorAll('pre > .reader-copy-code').length === 1 && codeText(content.querySelector('pre')) === 'let x = 1;', 'Code blocks get one copy button that copies only the code');
+    window.__messages.length = 0;
+    content.querySelector('a[href="notes/plan.md"]').click();
+    content.querySelector('a[href^="https:"]').click();
+    expect(window.__messages.join('|') === 'openLink:notes/plan.md|openLink:https://example.com/x', 'Links are routed to the host instead of navigating the preview');
+    document.getElementById('toc-fab').click();
+    expect(document.body.classList.contains('toc-open'), 'Outline button opens the outline');
+    document.getElementById('toc-fab').click();
+    expect(!document.body.classList.contains('toc-open'), 'Outline button closes the outline');
+    setReaderWarning('reader-operation-warning', 'Test warning');
+    const warning = document.getElementById('reader-operation-warning');
+    expect(!warning.hidden && getComputedStyle(warning).pointerEvents === 'auto', 'Warnings accept the pointer');
+    warning.querySelector('.reader-warning-close').click();
+    expect(warning.hidden, 'Warnings can be dismissed');
+
+    // Scrolling: another document jumps to its caret without animation; typing on the caret line does not re-centre
+    const longDoc = Array.from({length: 120}, (_, i) => 'Line ' + i).join('\n\n');
+    await render(longDoc, '41', -1);
+    scrollTo(scrollRoot().scrollHeight);
+    await render(longDoc, '42', 0);
+    expect(scrollRoot().scrollTop === 0, 'Switching to another document lands on its caret at once (no scroll animation from the old offset)');
+    await render(longDoc, '42', 200);
+    const centred = scrollRoot().scrollTop;
+    await new Promise(resolve => setTimeout(resolve, 700));
+    const afterMove = scrollRoot().scrollTop;
+    scrollTo(afterMove - 120);
+    await render(longDoc + '\n\nTyped', '42', 200);
+    expect(afterMove > centred - 1 && Math.abs(scrollRoot().scrollTop - (afterMove - 120)) < 30, 'A render with an unchanged caret line keeps the reader where it is (no re-centring)');
+
     settings();
     const darkRow = row('Dark mode:');
     const beforeDark = window.__messages.length;

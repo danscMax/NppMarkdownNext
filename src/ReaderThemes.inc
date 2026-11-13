@@ -1,4 +1,5 @@
 #include "ThemePalette.inc"
+#include "ReaderTools.inc"
 
 inline constexpr const char* s_readerThemeCss = R"THEME_CSS(
 
@@ -300,27 +301,22 @@ body.toc-open #reader-wrap { padding-right: 300px; }
 @media print { #theme-fab, #theme-popover, #toc-drawer, #toc-backdrop, #toast-msg, #reader-warnings { display: none !important; } }
 @media (prefers-reduced-motion: reduce) { body, #theme-fab, #theme-popover, #toc-drawer, .toast-notification { animation: none; transition: none; } }
 
-/* Tables: a table that does not fit the reading column grows into the free pane width (centered on the column),
-   and scrolls only when even the whole pane is too narrow. Track 2 = fit-content(column width), tracks 1/3 = the gutters. */
-#reader-wrap { container-type: inline-size; }
-#content { --reader-doc-pad: 22px; padding-inline: var(--reader-doc-pad); }
-#content .reader-table-wrap {
-    --reader-gutter: calc((100cqw - min(100cqw, var(--reader-max-width, 860px))) / 2 + var(--reader-doc-pad));
-    display: grid;
-    grid-template-columns: minmax(0, var(--reader-gutter)) fit-content(calc(100cqw - 2 * var(--reader-gutter))) minmax(0, var(--reader-gutter));
-    width: 100cqw;
-    margin: 1em 0;
-    margin-inline-start: calc(-1 * var(--reader-gutter));
-    overflow-x: auto;
-}
-#content .reader-table-wrap > table { grid-column: 2; display: table; width: auto; margin: 0; overflow: visible; }
-#content .reader-table-wrap th { position: relative; }
-/* still too wide: cap the height so the horizontal scrollbar stays on screen instead of below a long table */
-#content .reader-table-wrap.reader-table-overflow { max-height: calc(100vh - 48px); overflow: auto; }
-#content .reader-table-overflow thead th { position: sticky; top: 0; z-index: 1; }
-.reader-col-grip { position: absolute; top: 0; bottom: 0; inset-inline-end: 0; width: 7px; cursor: col-resize; touch-action: none; }
-.reader-col-grip:hover, .reader-col-grip.active { background: var(--link-color); opacity: 0.45; }
-body.reader-col-resizing { cursor: col-resize; user-select: none; }
+/* Syntax colors on a dark code box for themes without their own (GitHub dark). :where() keeps them below
+   every theme's palette (body.<theme> :is(.hljs-…)), so only the light highlight.js defaults are replaced. */
+:where([data-theme="dark"]) .doc :is(.hljs-keyword, .hljs-doctag, .hljs-type, .hljs-template-tag) { color: #ff7b72; }
+:where([data-theme="dark"]) .doc :is(.hljs-string, .hljs-regexp) { color: #a5d6ff; }
+:where([data-theme="dark"]) .doc :is(.hljs-title, .hljs-section) { color: #d2a8ff; }
+:where([data-theme="dark"]) .doc :is(.hljs-number, .hljs-literal, .hljs-attr, .hljs-attribute, .hljs-variable, .hljs-built_in, .hljs-selector-class, .hljs-operator, .hljs-meta) { color: #79c0ff; }
+:where([data-theme="dark"]) .doc :is(.hljs-comment, .hljs-quote) { color: #8b949e; }
+:where([data-theme="dark"]) .doc :is(.hljs-name, .hljs-selector-tag, .hljs-symbol) { color: #7ee787; }
+:where([data-theme="dark"]) .doc :is(.hljs-subst, .hljs-params, .hljs-strong, .hljs-emphasis) { color: var(--ink); }
+
+/* Footnotes */
+.doc .footnote-ref { line-height: 0; }
+.doc .footnote-ref a { text-decoration: none; padding: 0 1px; }
+.doc .footnotes { margin-top: 2em; font-size: 0.9em; color: var(--muted); }
+.doc .footnotes hr { margin-bottom: 0.8em; }
+.doc .footnote-back { text-decoration: none; }
 
 )THEME_CSS";
 inline constexpr const char* s_readerSettingsHtml = R"SETTINGS_HTML(
@@ -334,7 +330,7 @@ inline constexpr const char* s_readerSettingsHtml = R"SETTINGS_HTML(
 
 
 <div id="toast-msg" class="toast-notification" role="status"></div>
-<div id="reader-warnings"><div id="reader-settings-warning" role="alert" hidden></div><div id="reader-operation-warning" role="alert" hidden></div></div>
+<div id="reader-warnings"><div id="reader-settings-warning" role="alert" hidden></div><div id="reader-operation-warning" role="alert" hidden></div><div id="reader-script-warning" role="alert" hidden></div></div>
 <div id="toc-backdrop" onclick="closeToc()"></div>
 <aside id="toc-drawer" aria-label="Outline / Table of Contents" inert>
   <div class="toc-header"><span class="toc-title">Outline / Table of Contents</span><button class="toc-close" aria-label="Close outline" onclick="closeToc()">&#215;</button></div>
@@ -641,11 +637,14 @@ function refreshThemePopover() {
             }
         }
     }
+    // Rebuilding the rows drops keyboard focus; keep it on the same row so arrow-key navigation continues.
+    var focusedRow = list.contains(document.activeElement) ? Array.from(list.querySelectorAll('.theme-pop-item')).indexOf(document.activeElement) : -1;
     list.innerHTML = html;
+    if (focusedRow >= 0) { var rows = list.querySelectorAll('.theme-pop-item'); if (rows.length) rows[Math.min(focusedRow, rows.length - 1)].focus(); }
     positionThemePopover();
 }
 
-function showToast(text) {
+function showToast(text, durationMs) {
     var toast = document.getElementById("toast-msg");
     if (!toast) return;
     toast.textContent = text;
@@ -653,7 +652,7 @@ function showToast(text) {
     if (window._toastTimer) clearTimeout(window._toastTimer);
     window._toastTimer = setTimeout(function() {
         toast.classList.remove("show");
-    }, 2000);
+    }, durationMs || 3000);
 }
 
 function toggleSyncFromMenu() {
@@ -731,6 +730,10 @@ function toggleBiDiFromMenu() {
 function beginHtmlOperation(operation) {
     if (pendingExport) return false;
     pendingExport = {operation: operation, requestId: exportPrefix + ':' + (++exportCounter)};
+    // Safety valve: a result lost in transport must not disable both commands for the page's lifetime.
+    // Generous, because Save HTML waits for the user in the file dialog.
+    var request = pendingExport;
+    request.timer = setTimeout(function() { if (pendingExport === request) { pendingExport = null; refreshThemePopover(); } }, 10 * 60 * 1000);
     window.chrome.webview.postMessage(operation + ':' + pendingExport.requestId);
     refreshThemePopover();
     return true;
@@ -738,20 +741,18 @@ function beginHtmlOperation(operation) {
 
 function showOperationResult(data) {
     if (data.operation === 'saveSettings') {
-        var warning = document.getElementById('reader-settings-warning');
-        warning.hidden = data.status === 'succeeded';
-        warning.textContent = warning.hidden ? '' : ('Settings could not be saved. ' + (data.detail || 'Change a setting to retry.'));
+        setReaderWarning('reader-settings-warning', data.status === 'succeeded' ? '' : ('Settings could not be saved. ' + (data.detail || 'Change a setting to retry.')));
         return;
     }
     if (pendingExport) {
         if (!data.requestId || pendingExport.requestId !== data.requestId || pendingExport.operation !== data.operation) return;
+        clearTimeout(pendingExport.timer);
         pendingExport = null;
     } else if (data.requestId) return;
     refreshThemePopover();
-    var warning = document.getElementById('reader-operation-warning');
-    warning.hidden = data.status === 'succeeded' || data.status === 'cancelled';
-    warning.textContent = warning.hidden ? '' : ((data.status === 'partial' ? 'Only part of the clipboard data was copied. ' : 'Operation failed. ') + (data.detail || '') + (data.recoveryPath ? ' Recovery file: ' + data.recoveryPath : ''));
-    if (data.status === 'succeeded') showToast(data.operation === 'copyHtml' ? 'Rendered HTML copied' : 'HTML saved');
+    var failed = data.status !== 'succeeded' && data.status !== 'cancelled';
+    setReaderWarning('reader-operation-warning', failed ? ((data.status === 'partial' ? 'Only part of the clipboard data was copied. ' : 'Operation failed. ') + (data.detail || '') + (data.recoveryPath ? ' Recovery file: ' + data.recoveryPath : '')) : '');
+    if (data.status === 'succeeded') showToast(data.operation === 'copyHtml' ? 'Rendered HTML copied' : 'HTML saved', 5000);
 }
 
 function saveAsHtmlFromMenu() {
@@ -823,6 +824,7 @@ function openToc() {
     if (drawer) { drawer.classList.add("open"); drawer.inert = false; }
     if (backdrop) backdrop.classList.add("open");
     positionThemePopover();
+    scheduleCurrentSection();
     if (window.chrome && window.chrome.webview) {
         window.chrome.webview.postMessage("tocStateChanged:true");
     }
@@ -853,8 +855,9 @@ function onTocClick(id) {
 
 var readerIndex = {headings: [], blocks: []};
 var headingObserver = null, currentSectionFrame = 0;
+// The current section only marks an outline entry: with the outline closed there is nothing to measure.
 function scheduleCurrentSection() {
-    if (currentSectionFrame) return;
+    if (currentSectionFrame || !document.body.classList.contains('toc-open')) return;
     currentSectionFrame = requestAnimationFrame(function() {
         currentSectionFrame = 0;
         var active = readerIndex.headings[0];
@@ -918,6 +921,7 @@ function applyReaderSettings(data) {
     if (drawer) { drawer.classList.toggle('open', !!data.outline); drawer.inert = !data.outline; }
     var backdrop = document.getElementById('toc-backdrop');
     if (backdrop) backdrop.classList.toggle('open', !!data.outline);
+    scheduleCurrentSection();
     refreshThemePopover();
 }
 if (window.chrome && window.chrome.webview) {
@@ -967,121 +971,21 @@ function initializeReaderSettings() {
         if (pop.style.display === 'block') { closeThemePopover(); document.getElementById('theme-fab').focus(); }
         else if (document.body.classList.contains('toc-open')) closeToc();
     });
-    document.addEventListener('readerRendered', function(event) { updateReaderOutline(event.detail); layoutReaderTables(event.detail); });
+    document.addEventListener('readerRendered', function(event) { updateReaderOutline(event.detail); });
     document.addEventListener('scroll', scheduleCurrentSection, {passive: true, capture: true});
     window.addEventListener('resize', function() { positionThemePopover(); scheduleCurrentSection(); });
-    if (window.readerDocumentIndex) { updateReaderOutline(window.readerDocumentIndex); layoutReaderTables(window.readerDocumentIndex); }
+    if (window.readerDocumentIndex) updateReaderOutline(window.readerDocumentIndex);
     applyContentTypography();
 }
-// Column widths the user dragged: "bufferId|tableFingerprint" -> [px]. The native host persists them per file
-// (tableWidths messages both ways), so they survive re-renders and Notepad++ restarts.
-var readerColumnWidths = new Map();
-var readerTableObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(markOverflowingTables) : null;
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initializeReaderSettings);
 else initializeReaderSettings();
-
-function markOverflowingTables() {
-    document.querySelectorAll('#content .reader-table-wrap').forEach(function(wrap) {
-        wrap.classList.toggle('reader-table-overflow', wrap.scrollWidth > wrap.clientWidth + 1);
-    });
-}
-function applyColumnWidths(table, widths) {
-    var cells = Array.from(table.rows[0].cells);
-    table.style.tableLayout = widths ? 'fixed' : '';
-    table.style.width = widths ? widths.reduce(function(sum, w) { return sum + w; }, 0) + 'px' : '';
-    cells.forEach(function(cell, i) { cell.style.width = widths ? widths[i] + 'px' : ''; });
-}
-function startColumnResize(event, table, key, column) {
-    if (event.button !== 0) return;
-    event.preventDefault(); event.stopPropagation();
-    var grip = event.currentTarget;
-    var widths = Array.from(table.rows[0].cells).map(function(cell) { return Math.round(cell.getBoundingClientRect().width); });
-    var rtl = getComputedStyle(table).direction === 'rtl';
-    var startX = event.clientX, startWidth = widths[column];
-    grip.setPointerCapture(event.pointerId);
-    grip.classList.add('active');
-    document.body.classList.add('reader-col-resizing');
-    function move(e) {
-        widths[column] = Math.max(40, startWidth + Math.round(rtl ? startX - e.clientX : e.clientX - startX));
-        applyColumnWidths(table, widths);
-    }
-    function end() {
-        grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', end); grip.removeEventListener('pointercancel', end);
-        grip.classList.remove('active');
-        document.body.classList.remove('reader-col-resizing');
-        readerColumnWidths.set(key, widths.slice());
-        persistTableWidths(key);
-        markOverflowingTables();
-    }
-    grip.addEventListener('pointermove', move); grip.addEventListener('pointerup', end); grip.addEventListener('pointercancel', end);
-}
-// A table is identified by its header text (+ the column count and its occurrence among same-header tables),
-// so widths follow the table when other tables are added or removed around it.
-function tableFingerprint(table, seen) {
-    var text = Array.from(table.rows[0].cells).map(function(cell) { return cell.textContent.trim(); }).join('\u0001');
-    seen[text] = (seen[text] || 0) + 1;
-    text += '\u0002' + table.rows[0].cells.length + '\u0002' + seen[text];
-    var hash = 0x811c9dc5;
-    for (var i = 0; i < text.length; i++) { hash ^= text.charCodeAt(i); hash = Math.imul(hash, 0x01000193) >>> 0; }
-    return ('0000000' + hash.toString(16)).slice(-8);
-}
-// Wire format (validated natively): "fp:w,w,...;fp:w,..." with fp = 8 hex digits.
-function persistTableWidths(key) {
-    var bufferId = key.slice(0, key.indexOf('|'));
-    if (!/^\d+$/.test(bufferId) || !window.chrome || !window.chrome.webview) return;
-    var entries = [];
-    readerColumnWidths.forEach(function(widths, k) {
-        if (k.indexOf(bufferId + '|') === 0) entries.push(k.slice(bufferId.length + 1) + ':' + widths.join(','));
-    });
-    window.chrome.webview.postMessage('tableWidths:' + bufferId + ':' + entries.join(';'));
-}
-function receiveTableWidths(bufferId, value) {
-    if (!/^\d+$/.test(bufferId) || !/^[0-9a-f:,;]*$/.test(value)) return;
-    Array.from(readerColumnWidths.keys()).forEach(function(k) { if (k.indexOf(bufferId + '|') === 0) readerColumnWidths.delete(k); });
-    value.split(';').forEach(function(entry) {
-        var match = /^([0-9a-f]{8}):(\d{1,4}(?:,\d{1,4})*)$/.exec(entry);
-        if (match) readerColumnWidths.set(bufferId + '|' + match[1], match[2].split(',').map(Number));
-    });
-    if (window.readerDocumentIndex && window.readerDocumentIndex.bufferId === bufferId) layoutReaderTables(window.readerDocumentIndex);
-}
-function layoutReaderTables(detail) {
-    var content = document.getElementById('content');
-    if (!content) return;
-    var bufferId = detail && detail.bufferId || '';
-    var seen = Object.create(null);
-    Array.from(content.querySelectorAll('table')).filter(function(table) {
-        return table.id !== 'hrdftrtbl' && !table.parentElement.closest('table') && table.rows.length;
-    }).forEach(function(table) {
-        if (!table.parentElement.classList.contains('reader-table-wrap')) {
-            var wrap = document.createElement('div');
-            wrap.className = 'reader-table-wrap';
-            table.before(wrap); wrap.appendChild(table);
-        }
-        var cells = Array.from(table.rows[0].cells);
-        var key = bufferId + '|' + tableFingerprint(table, seen);
-        cells.forEach(function(cell, column) {
-            if (cell.querySelector(':scope > .reader-col-grip')) return;
-            var grip = document.createElement('span');
-            grip.className = 'reader-col-grip';
-            grip.title = 'Drag to resize the column, double-click to reset';
-            grip.setAttribute('aria-hidden', 'true');
-            grip.addEventListener('pointerdown', function(e) { startColumnResize(e, table, key, column); });
-            grip.addEventListener('dblclick', function(e) { e.stopPropagation(); readerColumnWidths.delete(key); applyColumnWidths(table, null); persistTableWidths(key); markOverflowingTables(); });
-            cell.appendChild(grip);
-        });
-        var saved = readerColumnWidths.get(key);
-        applyColumnWidths(table, saved && saved.length === cells.length ? saved : null);
-    });
-    if (readerTableObserver) readerTableObserver.observe(document.getElementById('reader-wrap'));
-    markOverflowingTables();
-}
 
 )THEME_JS";
 
 inline std::string ReaderShellHtml() {
     std::string shell(s_kelkReaderShellHtml);
     shell.insert(shell.rfind("</head>"), std::string("<style>") + s_readerPaletteCss + s_readerThemeCss + s_readerSemanticCss +
-                 "</style><script>" + s_readerCatalogJs + s_readerThemeScript + "</script>");
-    shell.insert(shell.rfind("</body>"), s_readerSettingsHtml);
+                 s_readerToolsCss + "</style><script>" + s_readerCatalogJs + s_readerThemeScript + s_readerToolsScript + "</script>");
+    shell.insert(shell.rfind("</body>"), std::string(s_readerSettingsHtml) + s_readerToolsHtml);
     return shell;
 }

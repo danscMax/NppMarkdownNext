@@ -53,6 +53,8 @@ if "--import-heading-policy" in sys.argv:
         fp.write("\n")
     print("Imported heading policy Unicode " + unicodedata.unidata_version)
     sys.exit(0)
+# The committed bundle is reproduced byte for byte from Kelk 4beee81 (2026-10-16):
+#   git clone https://github.com/mohsen-1984/kelk ../kelk_repo && git -C ../kelk_repo checkout 4beee81
 default_kelk = os.path.abspath(os.path.join(repo_root, "..", "kelk_repo"))
 
 kelk_dir = sys.argv[1] if len(sys.argv) > 1 else default_kelk
@@ -195,8 +197,9 @@ html, body {
 .doc th, .doc td {
   border: 1px solid var(--line-strong);
   padding: 6px 12px;
-  text-align: start;
 }
+/* a column's own alignment (|:---:|, |---:|) wins; only unaligned cells follow the text direction */
+.doc :is(th, td):not([align]) { text-align: start; }
 .doc th {
   background: var(--table-head);
   font-weight: 600;
@@ -354,7 +357,7 @@ with open(os.path.join(repo_root, "include", "HeadingPolicy.inc"), "w", encoding
 callout_rows = []
 for item in callouts:
     for index, alias in enumerate(item["aliases"]):
-        title = item["title"] if index == 0 else item["localizedTitle"]
+        title = item.get("aliasTitles", {}).get(alias) or (item["title"] if index == 0 else item["localizedTitle"])
         callout_rows.append("    {L" + json.dumps(alias, ensure_ascii=False) + ", AlertType::" + item["nativeType"] + ", L" + json.dumps(title, ensure_ascii=False) + "},")
 with open(os.path.join(repo_root, "src", "CalloutRegistry.inc"), "w", encoding="utf-8") as fp:
     fp.write("// Generated from themes/callouts.json.\nstruct CalloutRegistryEntry { const wchar_t* alias; AlertType type; const wchar_t* title; };\n")
@@ -382,6 +385,7 @@ controller_js = r"""
   var readingPositions = new Map();
   var taskSources = new Map();
   var taskSourceLines = [];
+  var highlightCache = new Map(); // blocks of the last render only, so it never outgrows one document
 
   // Safe HTML entity escaping
   function escapeHtml(s) {
@@ -411,6 +415,45 @@ controller_js = r"""
       gfm: true,
       breaks: false
     });
+  }
+
+  // Footnotes as GitHub shows them: "[^id]" becomes a numbered superscript (in order of first reference),
+  // "[^id]: text" definitions (continuation lines indented) are collected into a list at the end.
+  var footnotes = null; // {order: [id], numbers: {id: n}, refs: {id: count}, notes: {id: html}} for one top-level parse
+  if (typeof marked !== 'undefined' && marked.use) {
+    marked.use({extensions: [{
+      name: 'footnoteDef', level: 'block',
+      start: function(src) { var m = /^\[\^[^\]\s]+\]:/m.exec(src); return m ? m.index : undefined; },
+      tokenizer: function(src) {
+        var m = /^\[\^([^\]\s]+)\]:[ \t]*([^\n]*(?:\n(?:[ \t]{2,}|\t)[^\n]*)*)(?:\n|$)/.exec(src);
+        if (m) return {type: 'footnoteDef', raw: m[0], id: m[1], tokens: this.lexer.inlineTokens(m[2].replace(/\n[ \t]+/g, ' '))};
+      },
+      renderer: function(token) {
+        if (footnotes && !(token.id in footnotes.notes)) footnotes.notes[token.id] = this.parser.parseInline(token.tokens);
+        return '';
+      }
+    }, {
+      name: 'footnoteRef', level: 'inline',
+      start: function(src) { var i = src.indexOf('[^'); return i < 0 ? undefined : i; },
+      tokenizer: function(src) {
+        var m = /^\[\^([^\]\s]+)\](?!:)/.exec(src);
+        if (m) return {type: 'footnoteRef', raw: m[0], id: m[1]};
+      },
+      renderer: function(token) {
+        if (!footnotes) return escapeHtml(token.raw);
+        if (!footnotes.numbers[token.id]) { footnotes.order.push(token.id); footnotes.numbers[token.id] = footnotes.order.length; }
+        var k = footnotes.refs[token.id] = (footnotes.refs[token.id] || 0) + 1, id = escapeHtml(token.id);
+        return '<sup class="footnote-ref"><a href="#fn-' + id + '" id="fnref-' + id + (k > 1 ? '-' + k : '') + '">' + footnotes.numbers[token.id] + '</a></sup>';
+      }
+    }]});
+  }
+
+  function renderFootnotes() {
+    var items = footnotes.order.filter(function(id) { return id in footnotes.notes; }).map(function(id) {
+      var safe = escapeHtml(id);
+      return '<li id="fn-' + safe + '">' + footnotes.notes[id] + ' <a href="#fnref-' + safe + '" class="footnote-back" aria-label="Back to the text">↩</a></li>';
+    });
+    return items.length ? '<section class="footnotes" data-source-unmapped="true"><hr><ol>' + items.join('') + '</ol></section>\n' : '';
   }
 
   function captureBlockSources(lexer) {
@@ -454,7 +497,8 @@ controller_js = r"""
       ' data-line="' + token.sourceLine + '"' : ' data-source-unmapped="true"';
   }
 
-  function slugHeading(text, usedIds) {
+  // suffixes (optional): base -> last suffix tried, so N identical headings cost O(N) instead of O(N^2).
+  function slugHeading(text, usedIds, suffixes) {
     var policy = window.READER_HEADING_POLICY;
     var ranges = policy.acceptedRanges;
     var lowercase = Array.from(String(text)).map(function(character) {
@@ -470,8 +514,10 @@ controller_js = r"""
       while (left < right) { var middle = (left + right) >>> 1; if (ranges[middle][1] < codepoint) left = middle + 1; else right = middle; }
       return left < ranges.length && ranges[left][0] <= codepoint;
     }).join('').trim().replace(/\s+/gu, '-') || 'section';
-    var id = base, number = 0;
+    var number = suffixes ? suffixes.get(base) || 0 : 0;
+    var id = number ? base + '-' + number : base;
     while (usedIds.has(id)) id = base + '-' + (++number);
+    if (suffixes) suffixes.set(base, number);
     usedIds.add(id);
     return id;
   }
@@ -491,10 +537,10 @@ controller_js = r"""
       if (used.has(element.id)) element.removeAttribute('id');
       else used.add(element.id);
     });
-    var headings = [];
+    var headings = [], suffixes = new Map();
     root.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(function(heading, index) {
       var text = headingText(heading);
-      if (!heading.id) heading.id = slugHeading(text, used);
+      if (!heading.id) heading.id = slugHeading(text, used, suffixes);
       var line = Number(heading.getAttribute('data-line'));
       headings.push({id: heading.id, level: Number(heading.tagName.slice(1)), text: text,
                      line: heading.hasAttribute('data-line') && Number.isInteger(line) ? line : null, element: heading});
@@ -535,13 +581,14 @@ controller_js = r"""
   function finalizeDocument(data, state, sequence) {
     var index = state === 'ready' ? buildDocumentIndex(contentEl) : {headings: [], blocks: []};
     var bufferId = typeof data.bufferId === 'string' ? data.bufferId : '';
-    currentDocument = {bufferId: bufferId, sync: typeof data.caretLine === 'number' && data.caretLine >= 0, closed: false, index: index};
+    var sync = typeof data.caretLine === 'number' && data.caretLine >= 0;
+    currentDocument = {bufferId: bufferId, sync: sync, caretLine: sync ? data.caretLine : null, closed: false, index: index};
     window.readerDocumentIndex = {bufferId: bufferId, renderRevision: data.renderRevision, sequence: sequence, state: state, headings: index.headings, blocks: index.blocks};
     document.dispatchEvent(new CustomEvent('readerRendered', {detail: window.readerDocumentIndex}));
     var saved = readingPositions.get(bufferId);
+    // Restored synchronously: a frame at the previous document's offset would flash, and a smooth scroll would animate.
     if (!currentDocument.sync && saved && index.blocks.length) {
-      requestAnimationFrame(function() {
-        if (sequence !== renderSequence || !currentDocument || currentDocument.closed || currentDocument.bufferId !== bufferId || currentDocument.sync) return;
+      (function() {
         var headingIndex = index.headings.findIndex(function(heading) { return heading.id === saved.heading && heading.line !== null; });
         var targetLine = headingIndex >= 0 ? index.headings[headingIndex].line + saved.relativeLine : saved.line;
         var candidates = index.blocks;
@@ -552,7 +599,7 @@ controller_js = r"""
         }
         var nearest = candidates.reduce(function(best, block) { return Math.abs(block.line - targetLine) < Math.abs(best.line - targetLine) ? block : best; });
         getReaderScrollRoot().scrollTop += nearest.element.getBoundingClientRect().top - saved.offset;
-      });
+      })();
     } else if (!currentDocument.sync && !saved) {
       getReaderScrollRoot().scrollTop = 0;
     }
@@ -563,6 +610,7 @@ controller_js = r"""
     if (!markdown || !markdown.trim()) return '';
     try {
       var source = markdown.replace(/\r\n?|\n/g, '\n');
+      var topLevel = startLine === undefined && !footnotes;
       if (startLine === undefined) {
         taskSources = new Map();
         taskSourceLines = source.split('\n');
@@ -602,9 +650,13 @@ controller_js = r"""
         var firstLine = (obj.text || '').split('\n')[0];
         var marker = firstLine.match(/^\[!([^\]\r\n]+)\][ \t]*$/);
         var registry = window.READER_CALLOUTS || [];
-        var callout = marker && registry.find(function(item) { return item.aliases.some(function(alias) { return alias.toLowerCase() === marker[1].toLowerCase(); }); });
+        var alias = null;
+        var callout = marker && registry.find(function(item) {
+          alias = item.aliases.find(function(candidate) { return candidate.toLowerCase() === marker[1].toLowerCase(); }) || null;
+          return alias !== null;
+        });
         if (callout) {
-          var title = marker[1].toLowerCase() === callout.aliases[0].toLowerCase() ? callout.title : callout.localizedTitle;
+          var title = (callout.aliasTitles && callout.aliasTitles[alias]) || (alias === callout.aliases[0] ? callout.title : callout.localizedTitle);
           var body = (obj.text || '').slice(firstLine.length).replace(/^\n/, '');
           var bodyLine = Number.isInteger(obj.sourceLine) ? obj.sourceLine + 1 : null;
           return '<blockquote class="alert-callout alert-' + escapeHtml(callout.type) + '"' + sourceAttributes(obj) + '><div class="alert-title">' + escapeHtml(title) + '</div>' + parseWithLines(body, bodyLine) + '</blockquote>\n';
@@ -632,8 +684,13 @@ controller_js = r"""
         return '<li' + sourceAttributes(obj) + '>' + text + '</li>\n';
       };
 
+      // GFM table rows are one source line each: header = the table's line, then the delimiter row, then the body.
       customRenderer.table = function(obj) {
         var text = marked.Renderer.prototype.table.call(this, obj);
+        if (Number.isInteger(obj.sourceLine) && obj.sourceLine >= 0) {
+          var row = 0;
+          text = text.replace(/<tr>/g, function() { return '<tr data-line="' + (obj.sourceLine + (row++ === 0 ? 0 : row)) + '">'; });
+        }
         return text.replace(/^<table/, '<table' + sourceAttributes(obj));
       };
 
@@ -641,8 +698,16 @@ controller_js = r"""
         return '<hr' + sourceAttributes(obj) + '>\n';
       };
 
-      var parser = new marked.Parser({ renderer: customRenderer });
-      return parser.parse(tokens);
+      // Lexing (above) only builds tokens; references are numbered and notes collected while rendering.
+      if (topLevel) footnotes = {order: [], numbers: {}, refs: {}, notes: {}};
+      try {
+        // marked.defaults carries the footnote extensions; a bare {renderer} would drop them.
+        var parser = new marked.Parser(Object.assign({}, marked.defaults, { renderer: customRenderer }));
+        var html = parser.parse(tokens);
+        return topLevel ? html + renderFootnotes() : html;
+      } finally {
+        if (topLevel) footnotes = null;
+      }
     } catch(err) {
       console.error('Markdown parse error:', err);
       return marked.parse(markdown);
@@ -652,6 +717,8 @@ controller_js = r"""
   function applyRender(data) {
     captureReadingPosition();
     var sequence = ++renderSequence;
+    var switched = !currentDocument || currentDocument.closed || currentDocument.bufferId !== data.bufferId;
+    var previousCaretLine = currentDocument ? currentDocument.caretLine : null;
     try {
       if (!contentEl) contentEl = document.getElementById('content');
       if (!contentEl) return;
@@ -690,12 +757,23 @@ controller_js = r"""
         links[l].rel = 'noopener';
       }
 
-      // Syntax highlighting with highlight.js
+      // Syntax highlighting with highlight.js; unchanged blocks reuse the previous render's result
+      // (keyed by language class + text), so typing in prose does not re-highlight every code block.
       if (typeof hljs !== 'undefined') {
         var codeBlocks = contentEl.querySelectorAll('pre code');
+        var nextCache = new Map();
         for (var c = 0; c < codeBlocks.length; c++) {
-          try { hljs.highlightElement(codeBlocks[c]); } catch(e) {}
+          var code = codeBlocks[c], key = code.className + '\u0000' + code.textContent;
+          var hit = highlightCache.get(key) || nextCache.get(key);
+          if (hit) {
+            code.className = hit.className; code.innerHTML = hit.html; code.dataset.highlighted = 'yes';
+          } else {
+            try { hljs.highlightElement(code); } catch(e) {}
+            hit = {className: code.className, html: code.innerHTML};
+          }
+          nextCache.set(key, hit);
         }
+        highlightCache = nextCache;
       }
 
       // Apply Kelk BiDi engine
@@ -738,9 +816,11 @@ controller_js = r"""
       }
 
       finalizeDocument(data, 'ready', sequence);
-      // Scroll to caret if specified
+      // Another document jumps to its caret at once (no animation from the old document's offset);
+      // the same document follows only a caret that moved, so typing on a line does not re-centre the page.
       if (typeof data.caretLine === 'number' && data.caretLine >= 0) {
-        scrollToLine(data.caretLine, false);
+        if (switched) scrollToLine(data.caretLine, false, 'instant');
+        else if (previousCaretLine !== data.caretLine) scrollToLine(data.caretLine, false);
       }
     } catch(err) {
       console.error('applyRender fatal error:', err);
@@ -757,26 +837,26 @@ controller_js = r"""
     }
   }
 
-  function scrollToLine(targetLine, highlight) {
+  // The block that contains the line: the last block starting at or before it (document order, so the
+  // innermost of nested blocks sharing a start line); before the first block, the first one.
+  function scrollToLine(targetLine, highlight, behavior) {
     if (!contentEl) contentEl = document.getElementById('content');
     if (!contentEl) return;
 
-    var elements = currentDocument ? currentDocument.index.blocks.map(function(block) { return block.element; }) : [];
-    if (elements.length === 0) return;
+    var blocks = currentDocument ? currentDocument.index.blocks : [];
+    if (blocks.length === 0) return;
 
-    var bestEl = null;
-    var minDiff = 999999;
-    for (var i = 0; i < elements.length; i++) {
-      var l = parseInt(elements[i].getAttribute('data-line'), 10);
-      var diff = Math.abs(l - targetLine);
-      if (diff < minDiff) {
-        minDiff = diff;
-        bestEl = elements[i];
+    var bestEl = blocks[0].element, bestLine = -1;
+    for (var i = 0; i < blocks.length; i++) {
+      if (blocks[i].line <= targetLine && blocks[i].line >= bestLine) {
+        bestLine = blocks[i].line;
+        bestEl = blocks[i].element;
       }
     }
+    if (currentDocument) currentDocument.caretLine = targetLine;
 
     if (bestEl) {
-      bestEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      bestEl.scrollIntoView({ behavior: behavior || 'smooth', block: 'center' });
       if (highlight) {
         var old = contentEl.querySelector('.caret-target');
         if (old) old.classList.remove('caret-target');

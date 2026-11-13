@@ -230,6 +230,11 @@ void TestMarkdownParser() {
     assert(doc.blocks[11].alertType == AlertType::Warning);
     assert(doc.blocks[11].isRTL);
 
+    // Cyrillic markers match in any letter case (towlower would not fold them in the C locale)
+    MarkdownDocument russian = MarkdownParser::Parse(L"> [!важно]\n> Текст\n");
+    assert(!russian.blocks.empty() && russian.blocks[0].type == MarkdownBlockType::AlertCallout);
+    assert(russian.blocks[0].alertType == AlertType::Important && russian.blocks[0].alertTitle == L"Важно");
+
     // Check regular blockquote & HR
     assert(doc.blocks[12].type == MarkdownBlockType::Blockquote);
     assert(doc.blocks[13].type == MarkdownBlockType::HorizontalRule);

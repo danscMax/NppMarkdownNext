@@ -3055,7 +3055,7 @@ inline constexpr const char* s_readerSemanticCss = R"SEMANTIC_CSS(body.bearded-v
   --reader-inlineCode: #a167ff;
   --reader-quote: #e4ac73;
   --reader-link: #3eb2ff;
-  --reader-comment: #334984;
+  --reader-comment: #7186c0;
 }
 body.bearded-v-gold-d-raynh .doc :is(h1,h2,h3,h4,h5,h6) { color: var(--reader-heading); }
 body.bearded-v-gold-d-raynh .doc strong { color: var(--reader-bold); }
