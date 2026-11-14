@@ -438,12 +438,15 @@ function documentRelativeUrl(src, base) {
 function resolveDocumentImages(detail) {
     var base = detail && detail.docBase || '';
     document.querySelectorAll('#content img[src]').forEach(function(image) {
+        if (image.dataset.readerResolved) return;
         var url = documentRelativeUrl(image.getAttribute('src'), base);
         if (!url) return;
-        // The host maps the folder just before the first render; a request that races the mapping fails once.
-        // One delayed retry covers that without looping on a file that is really missing.
+        image.dataset.readerResolved = '1';
+        // The host maps the folder just before the render, and the mapping API has no "applied" signal: a request
+        // that races it fails once. One delayed retry (of the same, unchanged URL) covers that without looping
+        // on a file that is really missing.
         image.addEventListener('error', function() {
-            setTimeout(function() { if (image.isConnected) { image.removeAttribute('src'); image.src = url; } }, 400);
+            setTimeout(function() { if (image.isConnected && image.getAttribute('src') === url) image.src = url; }, 400);
         }, {once: true});
         image.src = url;
     });
