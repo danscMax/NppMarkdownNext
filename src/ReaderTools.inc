@@ -47,7 +47,7 @@ body.reader-col-resizing { cursor: col-resize; user-select: none; }
     color: var(--text-secondary); cursor: pointer; transition: color 0.15s ease, border-color 0.15s ease;
 }
 #toc-fab:hover, body.toc-open #toc-fab { color: var(--link-color); border-color: var(--link-color); }
-body.toc-open #toc-fab { right: 332px; }
+body.toc-open #toc-fab { right: calc(var(--toc-width, 280px) + 52px); }
 #toc-fab:focus-visible, .reader-warning-close:focus-visible { outline: 2px solid var(--link-color); outline-offset: 2px; }
 .reader-menu-item:focus-visible { outline: none; background: rgba(128, 128, 128, 0.16); }
 @media (max-width: 650px) { body.toc-open #toc-fab { right: 58px; } }
@@ -77,6 +77,42 @@ body.toc-open #toc-fab { right: 332px; }
 .reader-warning-text { flex: 1; min-width: 0; }
 .reader-warning-close { flex: 0 0 auto; border: 0; background: none; color: inherit; cursor: pointer; font-size: 16px; line-height: 1; padding: 0 2px; opacity: 0.7; }
 .reader-warning-close:hover { opacity: 1; }
+/* Column grips are focusable (arrow keys resize): show them while focused */
+.reader-col-grip:focus-visible { outline: none; background: var(--link-color); opacity: 0.6; }
+
+/* Row filter bar above a table */
+.reader-table-filter { display: flex; align-items: center; gap: 8px; margin: 1em 0 -0.6em; font: 12.5px var(--font-ui); color: var(--text-secondary); }
+.reader-table-filter input, .toc-filter-box input {
+    flex: 1 1 auto; min-width: 0; max-width: 320px; padding: 5px 9px; border: 1px solid var(--border-color); border-radius: 7px;
+    background: var(--code-bg); color: var(--text-primary); font: inherit;
+}
+.reader-table-filter input:focus, .toc-filter-box input:focus { outline: 2px solid var(--link-color); outline-offset: 0; border-color: transparent; }
+.reader-table-filter-count { white-space: nowrap; }
+
+/* A picture that could not be shown names its file */
+.reader-image-missing {
+    display: inline-block; padding: 4px 9px; margin: 2px 0; border: 1px dashed var(--border-color); border-radius: 7px;
+    color: var(--text-secondary); font: 12px var(--font-ui); overflow-wrap: anywhere;
+}
+#content img.reader-image-broken, #content img[data-remote-src]:not([src]) { display: none; }
+
+/* Outline: filter field and the draggable left edge */
+.toc-filter-box { padding: 10px 14px 0; font: 12.5px var(--font-ui); }
+.toc-filter-box input { width: 100%; max-width: none; }
+.toc-filter-empty { padding: 10px 18px 0; color: var(--text-secondary); font: 12.5px var(--font-ui); }
+.toc-item[hidden] { display: none !important; }
+#toc-resize { position: absolute; top: 0; bottom: 0; left: 0; width: 7px; cursor: col-resize; z-index: 2; touch-action: none; }
+#toc-resize:hover, #toc-resize.active, #toc-resize:focus-visible { outline: none; background: var(--link-color); opacity: 0.45; }
+
+/* Back after a jump */
+#reader-back {
+    position: fixed; left: 16px; bottom: 16px; z-index: 9985; padding: 7px 14px; border: 1px solid var(--border-color); border-radius: 18px;
+    background: var(--toolbar-bg); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+    color: var(--text-primary); font: 13px var(--font-ui); cursor: pointer;
+}
+#reader-back[hidden] { display: none; }
+#reader-back:hover, #reader-back:focus-visible { color: var(--link-color); border-color: var(--link-color); outline: none; }
+
 /* Remote image placeholder: the document asked for a network image; nothing is fetched until clicked */
 .reader-remote-image {
     display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 6px 10px; margin: 2px 0;
@@ -87,7 +123,7 @@ body.toc-open #toc-fab { right: 332px; }
 .reader-remote-image:hover { color: var(--link-color); border-color: var(--link-color); }
 
 @media print {
-    #toc-fab, #reader-menu, .reader-copy-code, .reader-col-grip, .reader-remote-image { display: none !important; }
+    #toc-fab, #reader-menu, #reader-back, .reader-copy-code, .reader-col-grip, .reader-remote-image, .reader-table-filter { display: none !important; }
     /* paper has no scrollbars: tables print whole, at page width, and the outline drawer's space is not reserved */
     body.toc-open #reader-wrap { padding-right: 20px; }
     #content .reader-table-wrap, #content .reader-table-wrap.reader-table-overflow {
@@ -105,6 +141,7 @@ inline constexpr const char* s_readerToolsHtml = R"TOOLS_HTML(
   <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg>
 </button>
 <div id="reader-menu" role="menu" hidden></div>
+<button id="reader-back" type="button" title="Back to where you were (Alt+Left)" onclick="goBackInDocument()" hidden>&#8592; Back</button>
 )TOOLS_HTML";
 
 inline constexpr const char* s_readerToolsScript = R"TOOLS_JS(
@@ -162,16 +199,32 @@ function codeText(pre) {
     var code = pre.querySelector('code');
     return (code || pre).textContent.replace(/\n$/, '');
 }
+// A copy of rendered content without what the reader adds on screen: grips, buttons, filters, table wrappers,
+// widths set by dragging, source-line attributes. Remote images get their address back (the reader only held
+// it aside). Shared by Copy table, Copy section and the HTML export.
+var READER_DECORATIONS = '.reader-col-grip, .reader-copy-code, .reader-remote-image, .reader-image-missing, .reader-table-filter, .reader-legacy-anchor';
+var READER_ATTRIBUTES = ['data-line', 'data-source-unmapped', 'data-task-key', 'data-highlighted', 'data-local-path'];
+function cleanReaderClone(node) {
+    var clone = node.cloneNode(true);
+    var all = [clone].concat(Array.from(clone.querySelectorAll('*')));
+    clone.querySelectorAll(READER_DECORATIONS).forEach(function(element) { element.remove(); });
+    clone.querySelectorAll('.reader-table-wrap').forEach(function(wrap) { wrap.replaceWith.apply(wrap, Array.from(wrap.childNodes)); });
+    all.forEach(function(element) {
+        if (!element.removeAttribute) return;
+        READER_ATTRIBUTES.forEach(function(name) { element.removeAttribute(name); });
+        if (element.matches('table, th, td, tr')) element.removeAttribute('style');
+        if (element.matches('tr[hidden]')) element.removeAttribute('hidden');
+        if (element.matches('img[data-remote-src]')) { element.setAttribute('src', element.getAttribute('data-remote-src')); element.removeAttribute('data-remote-src'); }
+        element.classList && element.classList.remove('caret-target');
+    });
+    return clone;
+}
 function tableClipboard(table) {
-    var clone = table.cloneNode(true);
-    clone.querySelectorAll('.reader-col-grip').forEach(function(grip) { grip.remove(); });
-    clone.removeAttribute('style');
-    clone.querySelectorAll('[style]').forEach(function(cell) { cell.removeAttribute('style'); });
-    clone.querySelectorAll('[data-line]').forEach(function(element) { element.removeAttribute('data-line'); });
-    clone.removeAttribute('data-line');
+    var clone = cleanReaderClone(table);
     // Tab-separated text pastes into spreadsheet cells; tabs/newlines inside a cell would split it.
-    var text = Array.from(table.rows).map(function(row) {
-        return Array.from(row.cells).map(function(cell) { return cell.innerText.replace(/[\t\r\n]+/g, ' ').trim(); }).join('\t');
+    // From the clean copy: all rows, also those a row filter hides on screen.
+    var text = Array.from(clone.rows).map(function(row) {
+        return Array.from(row.cells).map(function(cell) { return cell.textContent.replace(/\s+/g, ' ').trim(); }).join('\t');
     }).join('\n');
     return {html: clone.outerHTML, text: text};
 }
@@ -203,8 +256,55 @@ function decorateCodeBlocks() {
 // which opens web/mail links in the default app and local files in Notepad++.
 function scrollToAnchor(id) {
     var target = document.getElementById(id) || document.querySelector('[name="' + CSS.escape(id) + '"]');
-    if (target) target.scrollIntoView({block: 'start'});
+    if (target) { rememberReadingPlace(); target.scrollIntoView({block: 'start'}); }
     return !!target;
+}
+
+// ---- Back after a jump -----------------------------------------------------------------------------------
+// Anchor links, footnotes and outline clicks jump; "Back" (button or Alt+Left) returns to where reading was.
+var readerBackStack = [], readerBackBuffer = '';
+function rememberReadingPlace() {
+    readerBackStack.push(getReaderScrollRoot().scrollTop);
+    if (readerBackStack.length > 30) readerBackStack.shift();
+    updateBackButton();
+}
+function goBackInDocument() {
+    if (!readerBackStack.length) return;
+    getReaderScrollRoot().scrollTop = readerBackStack.pop();
+    updateBackButton();
+}
+function updateBackButton() {
+    var button = document.getElementById('reader-back');
+    if (button) button.hidden = !readerBackStack.length;
+}
+document.addEventListener('keydown', function(event) {
+    if (event.altKey && !event.ctrlKey && event.key === 'ArrowLeft' && readerBackStack.length) { event.preventDefault(); goBackInDocument(); }
+});
+
+// ---- Copy a section --------------------------------------------------------------------------------------
+// The heading a top-level block belongs to, with everything up to the next heading of the same or higher level.
+function sectionOf(target) {
+    var content = document.getElementById('content');
+    var node = target === content ? null : target.closest('#content > *');
+    while (node && !/^H[1-6]$/.test(node.tagName)) node = node.previousElementSibling;
+    if (!node) return null;
+    var level = Number(node.tagName.charAt(1)), nodes = [node];
+    for (var next = node.nextElementSibling; next && !(/^H[1-6]$/.test(next.tagName) && Number(next.tagName.charAt(1)) <= level); next = next.nextElementSibling) {
+        if (!next.matches(READER_DECORATIONS)) nodes.push(next);
+    }
+    return {heading: node, nodes: nodes};
+}
+function sectionClipboard(section) {
+    var holder = document.createElement('div');
+    section.nodes.forEach(function(node) { holder.appendChild(cleanReaderClone(node)); });
+    // innerText needs layout: measure the clean copy off-screen, styled like the document
+    var probe = holder.cloneNode(true);
+    probe.className = 'doc';
+    probe.style.cssText = 'position:fixed;left:-100000px;top:0;width:800px';
+    document.body.appendChild(probe);
+    var text = probe.innerText.trim();
+    probe.remove();
+    return {html: holder.innerHTML, text: text};
 }
 document.addEventListener('click', function(event) {
     if (event.button !== 0 || event.defaultPrevented) return;
@@ -252,12 +352,20 @@ function readerMenuItems(target) {
     var link = target.closest('#content a[href]');
     var pre = target.closest('#content pre');
     var table = target.closest('#content table');
+    var section = sectionOf(target);
+    var bufferId = window.readerDocumentIndex ? window.readerDocumentIndex.bufferId : '';
+    var anyWidths = Array.from(readerColumnWidths.keys()).some(function(key) { return key.indexOf(bufferId + '|') === 0; });
     var items = [
         {label: 'Copy', key: 'Ctrl+C', disabled: !selection, run: function() { document.execCommand('copy'); }},
         link ? {label: 'Copy link address', run: function() { copyToClipboard('', link.getAttribute('href')); }} : null,
         pre ? {label: 'Copy code', run: function() { copyToClipboard('', codeText(pre)); }} : null,
         table ? {label: 'Copy table', run: function() { var data = tableClipboard(table); if (copyToClipboard(data.html, data.text)) showToast('Table copied'); }} : null,
+        section ? {label: 'Copy section', run: function() { var data = sectionClipboard(section); if (copyToClipboard(data.html, data.text)) showToast('Section copied'); }} : null,
         {label: 'Select all', key: 'Ctrl+A', run: function() { var range = document.createRange(); range.selectNodeContents(document.getElementById('content')); var s = window.getSelection(); s.removeAllRanges(); s.addRange(range); }},
+        table ? 'separator' : null,
+        table ? {label: 'Filter rows', run: function() { openTableFilter(table); }} : null,
+        table && readerColumnWidths.has(table.readerKey) ? {label: 'Reset column widths', run: function() { resetColumnWidths(table.readerKey); }} : null,
+        anyWidths ? {label: 'Reset all column widths', run: function() { resetColumnWidths(bufferId + '|'); }} : null,
         'separator',
         {label: 'Find in preview', key: 'Ctrl+F', run: findInPreview},
         {label: 'Print / Save as PDF', key: 'Ctrl+P', run: printPreview},
@@ -334,30 +442,117 @@ function applyColumnWidths(table, widths) {
     table.style.width = widths ? widths.reduce(function(sum, w) { return sum + w; }, 0) + 'px' : '';
     cells.forEach(function(cell, i) { cell.style.width = widths ? widths[i] + 'px' : ''; });
 }
-function startColumnResize(event, table, key, column) {
+// A pointer drag on a handle: onMove(dx) receives the horizontal distance from where the drag started,
+// onEnd() runs once when it is released. Shared by column grips and the outline's edge.
+function trackHorizontalDrag(event, handle, onMove, onEnd) {
     if (event.button !== 0) return;
     event.preventDefault(); event.stopPropagation();
-    var grip = event.currentTarget;
-    var widths = Array.from(table.rows[0].cells).map(function(cell) { return Math.round(cell.getBoundingClientRect().width); });
-    var rtl = getComputedStyle(table).direction === 'rtl';
-    var startX = event.clientX, startWidth = widths[column];
-    grip.setPointerCapture(event.pointerId);
-    grip.classList.add('active');
+    var startX = event.clientX;
+    handle.setPointerCapture(event.pointerId);
+    handle.classList.add('active');
     document.body.classList.add('reader-col-resizing');
-    function move(e) {
-        widths[column] = Math.max(40, startWidth + Math.round(rtl ? startX - e.clientX : e.clientX - startX));
-        applyColumnWidths(table, widths);
-    }
+    function move(e) { onMove(e.clientX - startX); }
     function end() {
-        grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', end); grip.removeEventListener('pointercancel', end);
-        grip.classList.remove('active');
+        handle.removeEventListener('pointermove', move); handle.removeEventListener('pointerup', end); handle.removeEventListener('pointercancel', end);
+        handle.classList.remove('active');
         document.body.classList.remove('reader-col-resizing');
-        readerColumnWidths.delete(key); // re-insert: the most recently resized table goes last
-        readerColumnWidths.set(key, widths.slice());
-        persistTableWidths(key);
-        markOverflowingTables();
+        onEnd();
     }
-    grip.addEventListener('pointermove', move); grip.addEventListener('pointerup', end); grip.addEventListener('pointercancel', end);
+    handle.addEventListener('pointermove', move); handle.addEventListener('pointerup', end); handle.addEventListener('pointercancel', end);
+}
+function measuredColumnWidths(table) {
+    return Array.from(table.rows[0].cells).map(function(cell) { return Math.round(cell.getBoundingClientRect().width); });
+}
+function commitColumnWidths(table, key, widths) {
+    readerColumnWidths.delete(key); // re-insert: the most recently resized table goes last
+    readerColumnWidths.set(key, widths.slice());
+    applyColumnWidths(table, widths);
+    persistTableWidths(key);
+    markOverflowingTables();
+}
+function startColumnResize(event, table, key, column) {
+    var widths = measuredColumnWidths(table), startWidth = widths[column];
+    var rtl = getComputedStyle(table).direction === 'rtl';
+    trackHorizontalDrag(event, event.currentTarget, function(dx) {
+        widths[column] = Math.max(40, startWidth + Math.round(rtl ? -dx : dx));
+        applyColumnWidths(table, widths);
+    }, function() { commitColumnWidths(table, key, widths); });
+}
+// Keyboard on a focused grip: arrows widen/narrow by 16px (Shift: 64px), Delete/Backspace resets the table.
+function columnGripKey(event, table, key, column) {
+    var step = event.shiftKey ? 64 : 16, rtl = getComputedStyle(table).direction === 'rtl';
+    var delta = {ArrowRight: step, ArrowLeft: -step}[event.key];
+    if (delta !== undefined) {
+        event.preventDefault();
+        var widths = readerColumnWidths.get(key) || measuredColumnWidths(table);
+        widths = widths.slice();
+        widths[column] = Math.max(40, widths[column] + (rtl ? -delta : delta));
+        commitColumnWidths(table, key, widths);
+    } else if (event.key === 'Delete' || event.key === 'Backspace') {
+        event.preventDefault();
+        resetColumnWidths(key);
+    }
+}
+// key: one table ("buffer|fp") or every table of a document ("buffer|").
+function resetColumnWidths(key) {
+    Array.from(readerColumnWidths.keys()).forEach(function(k) { if (k === key || (key.slice(-1) === '|' && k.indexOf(key) === 0)) readerColumnWidths.delete(k); });
+    document.querySelectorAll('#content table').forEach(function(table) {
+        if (table.readerKey && (table.readerKey === key || (key.slice(-1) === '|' && table.readerKey.indexOf(key) === 0))) applyColumnWidths(table, null);
+    });
+    persistTableWidths(key);
+    markOverflowingTables();
+}
+
+// ---- Row filter ------------------------------------------------------------------------------------------
+// Hides body rows that do not contain the typed text (case- and ё/е-insensitive); kept per table for the session.
+var readerTableFilters = new Map();
+function normalizedText(text) { return String(text).toLowerCase().replace(/ё/g, 'е'); }
+function applyTableFilter(table, query) {
+    var needle = normalizedText(query.trim()), shown = 0, total = 0;
+    Array.from(table.tBodies).forEach(function(body) {
+        Array.from(body.rows).forEach(function(row) {
+            total++;
+            var visible = !needle || normalizedText(row.textContent).indexOf(needle) >= 0;
+            row.hidden = !visible;
+            if (visible) shown++;
+        });
+    });
+    return {shown: shown, total: total};
+}
+function openTableFilter(table, initial) {
+    var wrap = table.closest('.reader-table-wrap') || table;
+    var bar = wrap.previousElementSibling && wrap.previousElementSibling.classList.contains('reader-table-filter') ? wrap.previousElementSibling : null;
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.className = 'reader-table-filter';
+        var input = document.createElement('input');
+        input.type = 'text'; // the bar has its own close button (a search field would add a second ×)
+        input.placeholder = 'Filter rows';
+        input.setAttribute('aria-label', 'Filter rows');
+        var count = document.createElement('span');
+        count.className = 'reader-table-filter-count';
+        var close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'reader-warning-close';
+        close.title = 'Close filter';
+        close.setAttribute('aria-label', 'Close filter');
+        close.textContent = '×';
+        var update = function() {
+            var result = applyTableFilter(table, input.value);
+            count.textContent = input.value.trim() ? result.shown + ' / ' + result.total : '';
+            if (input.value.trim()) readerTableFilters.set(table.readerKey, input.value); else readerTableFilters.delete(table.readerKey);
+            markOverflowingTables();
+        };
+        var dismiss = function() { readerTableFilters.delete(table.readerKey); applyTableFilter(table, ''); bar.remove(); markOverflowingTables(); };
+        input.addEventListener('input', update);
+        input.addEventListener('keydown', function(event) { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); dismiss(); } });
+        close.addEventListener('click', dismiss);
+        bar.append(input, count, close);
+        bar.addEventListener('dblclick', function(event) { event.stopPropagation(); });
+        wrap.before(bar);
+        if (initial) { input.value = initial; update(); }
+    }
+    if (!initial) bar.querySelector('input').focus();
 }
 // A table is identified by its header text (+ the column count and its occurrence among same-header tables),
 // so widths follow the table when other tables are added or removed around it.
@@ -413,18 +608,24 @@ function layoutReaderTables(detail) {
                 while (readerTableScroll.size > 200) readerTableScroll.delete(readerTableScroll.keys().next().value);
             }, {passive: true});
         }
+        table.readerKey = key;
         cells.forEach(function(cell, column) {
             if (cell.querySelector(':scope > .reader-col-grip')) return;
             var grip = document.createElement('span');
             grip.className = 'reader-col-grip';
-            grip.title = 'Drag to resize the column, double-click to reset';
-            grip.setAttribute('aria-hidden', 'true');
+            grip.title = 'Drag to resize the column (or arrow keys), double-click to reset';
+            grip.tabIndex = 0;
+            grip.setAttribute('role', 'separator');
+            grip.setAttribute('aria-orientation', 'vertical');
+            grip.setAttribute('aria-label', 'Resize column ' + (column + 1));
             grip.addEventListener('pointerdown', function(e) { startColumnResize(e, table, key, column); });
-            grip.addEventListener('dblclick', function(e) { e.stopPropagation(); readerColumnWidths.delete(key); applyColumnWidths(table, null); persistTableWidths(key); markOverflowingTables(); });
+            grip.addEventListener('keydown', function(e) { columnGripKey(e, table, key, column); });
+            grip.addEventListener('dblclick', function(e) { e.stopPropagation(); resetColumnWidths(key); });
             cell.appendChild(grip);
         });
         var saved = readerColumnWidths.get(key);
         applyColumnWidths(table, saved && saved.length === cells.length ? saved : null);
+        if (readerTableFilters.has(key)) openTableFilter(table, readerTableFilters.get(key));
         if (readerTableScroll.has(key)) restore.push([wrap, readerTableScroll.get(key)]);
     });
     if (readerTableObserver) readerTableObserver.observe(document.getElementById('reader-wrap'));
@@ -455,18 +656,46 @@ function documentRelativeUrl(src, base) {
     if (!parts.length) return null;
     return base + parts.map(encodeURIComponent).join('/');
 }
+// A picture that cannot be shown says which file and why, instead of leaving an empty gap.
+function markMissingImage(image, written, reason) {
+    if (image.nextElementSibling && image.nextElementSibling.classList.contains('reader-image-missing')) return;
+    var note = document.createElement('span');
+    note.className = 'reader-image-missing';
+    note.textContent = reason + ': ' + written;
+    note.title = written;
+    image.classList.add('reader-image-broken');
+    image.after(note);
+}
 function resolveDocumentImages(detail) {
     var base = detail && detail.docBase || '';
+    document.querySelectorAll('#content img[data-local-path]').forEach(function(image) {
+        var path = image.getAttribute('data-local-path');
+        try { path = decodeURIComponent(path); } catch (e) {}
+        markMissingImage(image, path, 'Images by absolute path are not shown; use a path relative to the document');
+    });
     document.querySelectorAll('#content img[src]').forEach(function(image) {
-        if (image.dataset.readerResolved) return;
-        var url = documentRelativeUrl(image.getAttribute('src'), base);
-        if (!url) return;
-        image.dataset.readerResolved = '1';
+        var written = image.getAttribute('src');
+        if (/^[a-z]:(?:[\\/]|%5c)/i.test(written)) { // Marked writes "C:\x" as "C:%5Cx"
+            markMissingImage(image, written, 'Images by absolute path are not shown; use a path relative to the document');
+            image.removeAttribute('src');
+            return;
+        }
+        if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(written)) return; // data:, already resolved, or remote (held aside)
+        var url = documentRelativeUrl(written, base);
+        if (!url) {
+            // relative but not servable: an unsaved document has no folder; a path above the folder is refused
+            markMissingImage(image, written, base ? 'Image outside the document folder' : 'Save the document to show its images');
+            image.removeAttribute('src');
+            return;
+        }
         // The host maps the folder just before the render, and the mapping API has no "applied" signal: a request
-        // that races it fails once. One delayed retry (of the same, unchanged URL) covers that without looping
-        // on a file that is really missing.
+        // that races it fails once. One delayed retry (of the same URL) covers that; a second failure is real.
         image.addEventListener('error', function() {
-            setTimeout(function() { if (image.isConnected && image.getAttribute('src') === url) image.src = url; }, 400);
+            setTimeout(function() {
+                if (!image.isConnected || image.getAttribute('src') !== url) return;
+                image.addEventListener('error', function() { markMissingImage(image, written, 'Image not found'); }, {once: true});
+                image.src = url;
+            }, 400);
         }, {once: true});
         image.src = url;
     });
@@ -493,9 +722,81 @@ function decorateRemoteImages() {
     });
 }
 
+// ---- Outline: filter and width ---------------------------------------------------------------------------
+// A filter field under the outline's title and a draggable left edge (width kept in the settings).
+var OUTLINE_WIDTH = {min: window.READER_SETTINGS.outlineWidthPx.min, max: window.READER_SETTINGS.outlineWidthPx.max, step: 24};
+function applyOutlineFilter() {
+    var input = document.getElementById('toc-filter');
+    var needle = input ? normalizedText(input.value.trim()) : '';
+    var links = document.querySelectorAll('#toc-drawer .toc-item'), shown = 0;
+    links.forEach(function(link) {
+        var visible = !needle || normalizedText(link.textContent).indexOf(needle) >= 0;
+        link.hidden = !visible;
+        if (visible) shown++;
+    });
+    var empty = document.getElementById('toc-filter-empty');
+    if (empty) empty.hidden = !(needle && links.length && !shown);
+}
+function setOutlineWidth(width, persist) {
+    width = Math.max(OUTLINE_WIDTH.min, Math.min(OUTLINE_WIDTH.max, Math.round(width)));
+    document.body.style.setProperty('--toc-width', width + 'px');
+    if (persist) postToHost('outlineWidth:' + width);
+    return width;
+}
+function currentOutlineWidth() {
+    var drawer = document.getElementById('toc-drawer');
+    return drawer ? Math.round(drawer.getBoundingClientRect().width) : 280;
+}
+function decorateOutline() {
+    var drawer = document.getElementById('toc-drawer');
+    if (!drawer || document.getElementById('toc-filter')) return;
+    var box = document.createElement('div');
+    box.className = 'toc-filter-box';
+    var input = document.createElement('input');
+    input.id = 'toc-filter';
+    input.type = 'search';
+    input.placeholder = 'Filter headings';
+    input.setAttribute('aria-label', 'Filter headings');
+    input.addEventListener('input', applyOutlineFilter);
+    input.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape' && input.value) { event.preventDefault(); event.stopPropagation(); input.value = ''; applyOutlineFilter(); }
+        if (event.key === 'Enter') { var first = drawer.querySelector('.toc-item:not([hidden])'); if (first) { event.preventDefault(); first.click(); } }
+    });
+    var empty = document.createElement('div');
+    empty.id = 'toc-filter-empty';
+    empty.className = 'toc-filter-empty';
+    empty.hidden = true;
+    empty.textContent = 'No matching headings';
+    box.append(input);
+    var header = drawer.querySelector('.toc-header');
+    if (header) header.after(box); else drawer.prepend(box);
+    var content = drawer.querySelector('.toc-content');
+    if (content) content.before(empty);
+    var edge = document.createElement('div');
+    edge.id = 'toc-resize';
+    edge.tabIndex = 0;
+    edge.title = 'Drag to resize the outline (or arrow keys)';
+    edge.setAttribute('role', 'separator');
+    edge.setAttribute('aria-orientation', 'vertical');
+    edge.setAttribute('aria-label', 'Resize the outline');
+    edge.addEventListener('pointerdown', function(event) {
+        var start = currentOutlineWidth(), width = start;
+        // the drawer sits on the right: dragging its left edge leftwards widens it
+        trackHorizontalDrag(event, edge, function(dx) { width = setOutlineWidth(start - dx, false); }, function() { setOutlineWidth(width, true); });
+    });
+    edge.addEventListener('keydown', function(event) {
+        var delta = {ArrowLeft: OUTLINE_WIDTH.step, ArrowRight: -OUTLINE_WIDTH.step}[event.key];
+        if (delta !== undefined) { event.preventDefault(); setOutlineWidth(currentOutlineWidth() + delta, true); }
+    });
+    drawer.prepend(edge);
+}
+
 // ---- Wiring ----------------------------------------------------------------------------------------------
 function decorateReaderDocument(detail) {
     closeReaderMenu();
+    var bufferId = detail && detail.bufferId || '';
+    if (bufferId !== readerBackBuffer) { readerBackBuffer = bufferId; readerBackStack = []; updateBackButton(); }
+    applyOutlineFilter();
     decorateRemoteImages();
     resolveDocumentImages(detail);
     layoutReaderTables(detail);
@@ -506,10 +807,12 @@ if (window.chrome && window.chrome.webview) {
         var data = event.data;
         if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { return; } }
         if (data && data.type === 'notice' && typeof data.text === 'string') showToast(data.text, 6000);
+        if (data && data.type === 'settings' && Number.isInteger(data.outlineWidthPx)) setOutlineWidth(data.outlineWidthPx, false);
     });
 }
 document.addEventListener('readerRendered', function(event) { decorateReaderDocument(event.detail); });
 function initializeReaderTools() {
+    decorateOutline();
     if (window.readerDocumentIndex) decorateReaderDocument(window.readerDocumentIndex);
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initializeReaderTools);

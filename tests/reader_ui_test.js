@@ -163,6 +163,52 @@ async () => {
     warning.querySelector('.reader-warning-close').click();
     expect(warning.hidden, 'Warnings can be dismissed');
 
+    // Sections, row filters, width resets, keyboard grips, back after a jump, outline filter and width, missing images
+    await render('# Report\n\nIntro\n\n## Findings\n\nAbout [details](#details).\n\n| ID | Sev |\n|---|---|\n| A1 | High |\n| A2 | Low |\n| A3 | High |\n\n### Details\n\nDeep text.\n\n## Next\n\n![chart](img/chart.png)\n\n![abs](C:\\tmp\\x.png)\n', '36');
+    const findingsText = content.querySelector('table').closest('.reader-table-wrap').previousElementSibling;
+    const section = sectionClipboard(sectionOf(findingsText));
+    expect(section.html.includes('<h2') && section.html.includes('Deep text') && !section.html.includes('Next') && !section.html.includes('reader-col-grip') && section.text.startsWith('Findings'), 'Copy section takes the heading up to the next heading of the same level, clean');
+    const table36 = content.querySelector('table');
+    content.querySelector('td').dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 40, clientY: 40}));
+    expect(menuLabels().includes('Filter rows') && menuLabels().includes('Copy section') && !menuLabels().includes('Reset column widths'), 'The table menu offers row filtering and section copy; no reset without widths');
+    [...menu.querySelectorAll('.reader-menu-item')].find(item => item.textContent.startsWith('Filter rows')).click();
+    const filterInput = content.querySelector('.reader-table-filter input');
+    filterInput.value = 'high'; filterInput.dispatchEvent(new Event('input'));
+    expect([...table36.tBodies[0].rows].filter(row => !row.hidden).length === 2 && content.querySelector('.reader-table-filter-count').textContent === '2 / 3', 'The row filter shows matching rows and a count');
+    expect(tableClipboard(table36).text.split('\n').length === 4, 'Copy table still copies every row while filtered');
+    await render(content.textContent ? '# Report\n\nIntro\n\n## Findings\n\nAbout [details](#details).\n\n| ID | Sev |\n|---|---|\n| A1 | High |\n| A2 | Low |\n| A3 | High |\n\n### Details\n\nDeep text.\n' : '', '36');
+    expect(content.querySelector('.reader-table-filter input').value === 'high' && [...content.querySelector('table').tBodies[0].rows].filter(row => !row.hidden).length === 2, 'The row filter survives a re-render');
+    const grip36 = content.querySelector('table .reader-col-grip');
+    const before36 = content.querySelector('table').rows[0].cells[0].getBoundingClientRect().width;
+    grip36.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', shiftKey: true, bubbles: true}));
+    expect(grip36.tabIndex === 0 && Math.abs(content.querySelector('table').rows[0].cells[0].getBoundingClientRect().width - before36 - 64) < 3, 'Shift+Right on a focused grip widens the column by 64px');
+    content.querySelector('td').dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 40, clientY: 40}));
+    expect(menuLabels().includes('Reset column widths') && menuLabels().includes('Reset all column widths'), 'Width resets appear once a table has widths');
+    window.__messages.length = 0;
+    [...menu.querySelectorAll('.reader-menu-item')].find(item => item.textContent.startsWith('Reset all column widths')).click();
+    expect(content.querySelector('table').style.width === '' && window.__messages.includes('tableWidths:36:'), 'Reset all column widths clears the document and tells the host');
+    content.querySelector('.reader-table-filter .reader-warning-close').click();
+    scrollTo(0);
+    content.querySelector('a[href="#details"]').click();
+    expect(!document.getElementById('reader-back').hidden, 'Following an anchor offers Back');
+    goBackInDocument();
+    expect(scrollRoot().scrollTop === 0 && document.getElementById('reader-back').hidden, 'Back returns to the place before the jump');
+    openToc();
+    const tocFilter = document.getElementById('toc-filter');
+    tocFilter.value = 'det'; tocFilter.dispatchEvent(new Event('input'));
+    expect([...document.querySelectorAll('#toc-drawer .toc-item')].filter(link => !link.hidden).map(link => link.textContent).join() === 'Details', 'The outline filter keeps matching headings only');
+    tocFilter.value = 'zzz'; tocFilter.dispatchEvent(new Event('input'));
+    expect(!document.getElementById('toc-filter-empty').hidden, 'The outline says when nothing matches');
+    tocFilter.value = ''; tocFilter.dispatchEvent(new Event('input'));
+    document.getElementById('toc-resize').dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowLeft', bubbles: true}));
+    await settled();
+    expect(Math.abs(document.getElementById('toc-drawer').getBoundingClientRect().width - 304) < 2 && window.__state.outlineWidthPx === 304, 'The outline edge widens the outline and the width is saved');
+    window.__emit(Object.assign({}, window.__state, {outlineWidthPx: 280}));
+    closeToc();
+    await render('![chart](img/chart.png)\n\n![abs](C:\\tmp\\x.png)\n\n![up](../x.png)\n', '37');
+    const notes = [...content.querySelectorAll('.reader-image-missing')].map(note => note.textContent);
+    expect(notes.length === 3 && notes[0].includes('Save the document') && notes[1].includes('absolute path') && notes[2].includes('Save the document'), 'Pictures that cannot be shown say which file and why ' + JSON.stringify(notes));
+
     // Shortcuts follow the typed letter, and the physical key only where the layout types no Latin letter
     expect(shortcutLetter({key: 'а', code: 'KeyF'}, 'f') && shortcutLetter({key: 'f', code: 'KeyY'}, 'f') && !shortcutLetter({key: 'u', code: 'KeyF'}, 'f') && !shortcutLetter({key: 'l', code: 'KeyP'}, 'p'), 'Ctrl+F/Ctrl+P work on Russian, Dvorak and AZERTY layouts');
     // At most the 60 most recently resized tables of a document are sent to the host

@@ -674,7 +674,8 @@ void WebView2Viewer::SyncUiState(const PluginConfig& config) {
          << L",\"outline\":" << (config.showOutline ? L"true" : L"false")
          << L",\"fontSizePx\":" << config.contentFontSizePx
          << L",\"lineHeightPercent\":" << config.contentLineHeightPercent
-         << L",\"maxWidthPx\":" << config.contentMaxWidthPx << L"}";
+         << L",\"maxWidthPx\":" << config.contentMaxWidthPx
+         << L",\"outlineWidthPx\":" << config.outlineWidthPx << L"}";
     PostJson(json.str());
 }
 

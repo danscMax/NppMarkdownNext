@@ -89,6 +89,7 @@ void PluginConfig::Load(const std::wstring& configPath) {
     contentFontSizePx = ReadingChoice(ReadStrictInt(sec, L"ContentFontSizePx", 15, configPath), kFontSizePresets, 15);
     contentLineHeightPercent = ReadingChoice(ReadStrictInt(sec, L"ContentLineHeightPercent", 170, configPath), kLineHeightPresets, 170);
     contentMaxWidthPx = ReadingChoice(ReadStrictInt(sec, L"ContentMaxWidthPx", 860, configPath), kReadingWidthPresets, 860);
+    outlineWidthPx = std::clamp(ReadStrictInt(sec, L"OutlineWidthPx", kOutlineWidthDefault, configPath), kOutlineWidthMin, kOutlineWidthMax);
 
     wchar_t buf[512] = { 0 };
     GetPrivateProfileStringW(sec, L"SupportedExtensions", L".md,.markdown,.mdown,.mkd,.rst", buf, 512, configPath.c_str());
@@ -99,7 +100,7 @@ void PluginConfig::Load(const std::wstring& configPath) {
     m_persistedPath = configPath;
     for (const wchar_t* key : {L"IsPanelVisible", L"AutoShowPanel", L"SyncWithCaret", L"ShowOutline", L"DarkModeOverride",
                                L"IsSmartBiDiEnabled", L"Theme", L"BeardedVariant", L"ZoomLevelPercent", L"SupportedExtensions",
-                               L"ContentFontSizePx", L"ContentLineHeightPercent", L"ContentMaxWidthPx"}) {
+                               L"ContentFontSizePx", L"ContentLineHeightPercent", L"ContentMaxWidthPx", L"OutlineWidthPx"}) {
         wchar_t raw[512] = {};
         const wchar_t* absent = L"\x1f<absent>";
         GetPrivateProfileStringW(sec, key, absent, raw, 512, configPath.c_str());
@@ -145,6 +146,7 @@ bool PluginConfig::Save(const std::wstring& configPath) const {
     write(L"ContentFontSizePx", std::to_wstring(contentFontSizePx));
     write(L"ContentLineHeightPercent", std::to_wstring(contentLineHeightPercent));
     write(L"ContentMaxWidthPx", std::to_wstring(contentMaxWidthPx));
+    write(L"OutlineWidthPx", std::to_wstring(outlineWidthPx));
     if (firstError != ERROR_SUCCESS) {
         SetLastError(firstError);
         return false;

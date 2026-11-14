@@ -48,7 +48,7 @@ body[class] .doc :is(h1, h2, h3, h4, h5, h6) { color: var(--ink); }
 }
 
 body.toc-open #theme-fab {
-    right: 290px;
+    right: calc(var(--toc-width, 280px) + 10px);
 }
 
 #theme-popover {
@@ -71,7 +71,7 @@ body.toc-open #theme-fab {
 }
 
 body.toc-open #theme-popover {
-    right: 290px;
+    right: calc(var(--toc-width, 280px) + 10px);
 }
 
 .theme-pop-title {
@@ -170,7 +170,7 @@ body.toc-open #theme-popover {
 }
 
 #toc-drawer {
-    width: 280px;
+    width: var(--toc-width, 280px); /* the user drags its edge; kept in the settings */
     max-width: calc(100vw - 32px);
     background: var(--drawer-bg);
     border-left: 1px solid var(--border-color);
@@ -288,7 +288,7 @@ body { transition: background-color 0.25s ease, color 0.25s ease; }
 #theme-fab:focus-visible, .theme-pop-item:focus-visible, .toc-close:focus-visible, .toc-item:focus-visible { outline: 2px solid var(--link-color); outline-offset: 2px; }
 #toc-drawer { display: flex !important; position: fixed; top: 0; right: 0; transform: translateX(100%); }
 body.toc-open #toc-drawer { transform: translateX(0); }
-body.toc-open #reader-wrap { padding-right: 300px; }
+body.toc-open #reader-wrap { padding-right: calc(var(--toc-width, 280px) + 20px); }
 @media (max-width: 650px) {
     body.toc-open #reader-wrap { padding-right: 20px; }
     body.toc-open #theme-fab, body.toc-open #theme-popover { right: 16px; }
@@ -863,6 +863,7 @@ function toggleTocFromMenu() {
 function onTocClick(id) {
     var el = document.getElementById(id);
     if (el) {
+        if (typeof rememberReadingPlace === 'function') rememberReadingPlace(); // "Back" returns here
         el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
     if (window.innerWidth <= 650) {

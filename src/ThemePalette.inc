@@ -3047,7 +3047,7 @@ inline constexpr const char* s_readerCatalogJs = R"CATALOG_JS(window.READER_THEM
 var THEME_LIST = window.READER_THEME_CATALOG.filter(function(t){return t.id.indexOf("bearded-v-")!==0;});
 var THEME_CLASSES = THEME_LIST.filter(function(t){return t.id!=="follow"&&t.id!=="light";}).map(function(t){return t.id;});
 window.BEARDED_VARIANTS = window.READER_THEME_CATALOG.filter(function(t){return t.id.indexOf("bearded-v-")===0;});
-window.READER_SETTINGS = {"version":"1.6.0","presets":{"fontSizePx":[15,17,19],"lineHeightPercent":[150,170,190],"maxWidthPx":[680,860,1100,0]}};
+window.READER_SETTINGS = {"version":"1.6.0","presets":{"fontSizePx":[15,17,19],"lineHeightPercent":[150,170,190],"maxWidthPx":[680,860,1100,0]},"outlineWidthPx":{"min":200,"max":640,"default":280}};
 )CATALOG_JS";
 inline constexpr const char* s_readerSemanticCss = R"SEMANTIC_CSS(body.bearded-v-gold-d-raynh {
   --reader-heading: #ffd000;

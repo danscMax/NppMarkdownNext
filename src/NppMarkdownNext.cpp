@@ -656,6 +656,10 @@ void NppMarkdownNext::OnSettingsMessage(const std::wstring& message) {
         m_config.contentLineHeightPercent = *value;
     } else if (auto value = ReadingMessageValue(message, L"readingWidth:", kReadingWidthPresets)) {
         m_config.contentMaxWidthPx = *value;
+    } else if (message.starts_with(L"outlineWidth:")) {
+        const std::wstring raw = message.substr(13);
+        if (raw.empty() || raw.size() > 4 || raw.find_first_not_of(L"0123456789") != std::wstring::npos) return;
+        m_config.outlineWidthPx = std::clamp(std::stoi(raw), kOutlineWidthMin, kOutlineWidthMax);
     } else if (message.rfind(L"zoomChange:", 0) == 0) {
         try {
             size_t parsed = 0;

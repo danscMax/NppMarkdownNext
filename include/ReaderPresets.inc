@@ -2,3 +2,4 @@
 inline constexpr int kFontSizePresets[] = {15, 17, 19};
 inline constexpr int kLineHeightPresets[] = {150, 170, 190};
 inline constexpr int kReadingWidthPresets[] = {680, 860, 1100, 0};
+inline constexpr int kOutlineWidthMin = 200, kOutlineWidthMax = 640, kOutlineWidthDefault = 280;

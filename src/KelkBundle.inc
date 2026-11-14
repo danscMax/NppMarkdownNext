@@ -3431,6 +3431,11 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
   // "load" button per image (data-remote-src). Media and inline-style URLs are dropped outright.
   var REMOTE_URL = /^\s*(?:[a-z][a-z0-9+.-]*:)?\/\//i;
   if (typeof DOMPurify !== 'undefined' && DOMPurify.addHook) {
+    // "C:\x.png" looks like an unknown URL scheme to the sanitizer, which drops it: keep the written path as plain
+    // text so the reader can say why the picture is not shown.
+    DOMPurify.addHook('uponSanitizeAttribute', function(node, data) {
+      if (node.nodeName === 'IMG' && data.attrName === 'src' && /^[a-z]:(?:[\\/]|%5c)/i.test(data.attrValue || '')) node.setAttribute('data-local-path', data.attrValue);
+    });
     DOMPurify.addHook('afterSanitizeAttributes', function(node) {
       if (node.nodeName === 'IMG' && REMOTE_URL.test(node.getAttribute('src') || '')) {
         node.setAttribute('data-remote-src', node.getAttribute('src'));
@@ -3755,7 +3760,7 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
 
       var html = parseWithLines(mdText);
       if (typeof DOMPurify !== 'undefined' && typeof DOMPurify.sanitize === 'function') {
-        html = DOMPurify.sanitize(html, { ADD_ATTR: ['data-line', 'data-source-unmapped', 'data-task-key', 'data-remote-src', 'target', 'dir', 'align'] });
+        html = DOMPurify.sanitize(html, { ADD_ATTR: ['data-line', 'data-source-unmapped', 'data-task-key', 'data-remote-src', 'data-local-path', 'target', 'dir', 'align'] });
       }
 
       contentEl.innerHTML = html;
@@ -7388,6 +7393,11 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
   // "load" button per image (data-remote-src). Media and inline-style URLs are dropped outright.
   var REMOTE_URL = /^\s*(?:[a-z][a-z0-9+.-]*:)?\/\//i;
   if (typeof DOMPurify !== 'undefined' && DOMPurify.addHook) {
+    // "C:\x.png" looks like an unknown URL scheme to the sanitizer, which drops it: keep the written path as plain
+    // text so the reader can say why the picture is not shown.
+    DOMPurify.addHook('uponSanitizeAttribute', function(node, data) {
+      if (node.nodeName === 'IMG' && data.attrName === 'src' && /^[a-z]:(?:[\\/]|%5c)/i.test(data.attrValue || '')) node.setAttribute('data-local-path', data.attrValue);
+    });
     DOMPurify.addHook('afterSanitizeAttributes', function(node) {
       if (node.nodeName === 'IMG' && REMOTE_URL.test(node.getAttribute('src') || '')) {
         node.setAttribute('data-remote-src', node.getAttribute('src'));
@@ -7712,7 +7722,7 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
 
       var html = parseWithLines(mdText);
       if (typeof DOMPurify !== 'undefined' && typeof DOMPurify.sanitize === 'function') {
-        html = DOMPurify.sanitize(html, { ADD_ATTR: ['data-line', 'data-source-unmapped', 'data-task-key', 'data-remote-src', 'target', 'dir', 'align'] });
+        html = DOMPurify.sanitize(html, { ADD_ATTR: ['data-line', 'data-source-unmapped', 'data-task-key', 'data-remote-src', 'data-local-path', 'target', 'dir', 'align'] });
       }
 
       contentEl.innerHTML = html;
