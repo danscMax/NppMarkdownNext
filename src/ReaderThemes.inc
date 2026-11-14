@@ -353,7 +353,7 @@ window._language = 'en'; window._languageSetting = 'auto';
 function rt(key, arg) {
     var strings = window.READER_STRINGS || {};
     var text = (strings[window._language] || {})[key] || (strings.en || {})[key] || key;
-    return arg === undefined ? text : text.replace('{0}', arg);
+    return arg === undefined ? text : text.replace('{0}', function() { return String(arg); });
 }
 // Fixed markup names its text by key: data-i18n (text), data-i18n-title, data-i18n-aria, data-i18n-placeholder.
 function localizeStatic() {

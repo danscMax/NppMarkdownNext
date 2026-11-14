@@ -57,6 +57,7 @@ void TestBiDiEngine() {
     assert(BiDiEngine::DocumentLanguage("سلام دنیا، گفتگو") == "fa");
     assert(BiDiEngine::DocumentLanguage("مرحبا بالعالم") == "ar");
     assert(BiDiEngine::DocumentLanguage("שלום עולם") == "he");
+    assert(BiDiEngine::DocumentLanguage("Если a < b, то всё хорошо") == "ru"); // a bare '<' is text, not markup
     assert(BiDiEngine::DocumentLanguage(std::string(70000, 'a') + "яяя") == "en"); // only the start is read
 
     // 1. RTL char detection
@@ -370,6 +371,17 @@ void TestHtmlExporter() {
         const std::string page = HtmlExporter::WrapDocument(embedded, "", L"T", PreviewTheme::Light, 0, L"", false);
         assert(page.find("<script") == std::string::npos && page.find("UE5HREFUQQ==") != std::string::npos);
         assert(page.find("<html lang=\"en\"") != std::string::npos);
+        // a link inside the folder to a file outside it is not shared (skipped where links cannot be created)
+        const std::wstring outside = std::wstring(folder) + L".secret.png", link = std::wstring(folder) + L"\\link.png";
+        HANDLE secret = CreateFileW(outside.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+        assert(secret != INVALID_HANDLE_VALUE && WriteFile(secret, "SECRET", 6, &written, nullptr));
+        CloseHandle(secret);
+        if (CreateSymbolicLinkW(link.c_str(), outside.c_str(), SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
+            const std::string linked = HtmlExporter::EmbedDocumentImages(std::string("<img src=\"") + kDocumentHostUrlUtf8 + "link.png\">", folder);
+            assert(linked.find("U0VDUkVU") == std::string::npos && linked.find("src=\"link.png\"") != std::string::npos);
+            DeleteFileW(link.c_str());
+        } else std::cout << "  (symbolic links unavailable: link check skipped)" << std::endl;
+        DeleteFileW(outside.c_str());
         assert(HtmlExporter::WrapDocument("<p>Привет</p>", "", L"T", PreviewTheme::Light, 0, L"", false).find("<html lang=\"ru\"") != std::string::npos);
         DeleteFileW(picture.c_str());
         RemoveDirectoryW(folder);

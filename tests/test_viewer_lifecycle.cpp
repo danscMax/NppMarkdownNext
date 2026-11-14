@@ -558,6 +558,12 @@ struct ReaderLifecycleTestPeer {
         fixture.editor.path = L"new 1";
         fixture.host.OnSettingsMessage(L"tableWidths:" + id + L":0a1b2c3d:1");
         assert(fixture.host.LoadDocumentState(DocumentState::TableWidths, L"new 1").empty());
+        // an unwritable state file: reported once, not after every scroll; an unchanged value is not rewritten
+        fixture.editor.path = L"C:\\Reader-Test\\one.md";
+        fixture.host.m_documentStatePath = L"Z:\\no-such-folder-reader-test\\documents.ini";
+        fixture.messages.clear();
+        for (const wchar_t* place : {L"10", L"20", L"20", L"30"}) fixture.host.OnSettingsMessage(L"readingPosition:" + id + L":" + place);
+        assert(fixture.Count(L"saveSettings") == 1);
     }
 
     static void SettingsWarningLifecycle() {

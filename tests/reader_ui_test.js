@@ -217,6 +217,14 @@ async () => {
     expect(payload.charAt(0) === '\n' && exportedHtml.startsWith('<nav class="export-toc"') && exportedHtml.includes('class="footnotes"'), 'The export body is the rendered document with a contents list and footnotes');
     expect(!/reader-col-grip|reader-table-wrap|data-line|reader-remote-image|reader-copy-code/.test(exportedHtml) && exportedHtml.includes('src="https://example.com/n.png"'), 'The export body carries no reader decorations and keeps remote picture addresses');
     expect(exportedText.startsWith('One') && exportedText.split('Two').length === 2 && exportedText.includes('Note'), 'The export plain text follows the document (headings once)');
+    expect(!performance.getEntriesByType('resource').some(entry => entry.name.includes('example.com/n.png')), 'Exporting a page with an unclicked web picture fetches nothing');
+    const crafted = document.createElement('div');
+    crafted.innerHTML = '<a href="tel:123">t</a><a href="notes.md#x">n</a><a href="https://e.com">w</a><img data-remote-src="file:///C:/secret.png"><img data-remote-src="//cdn.e.com/p.png">';
+    const cleaned = cleanReaderClone(crafted).innerHTML;
+    expect(!cleaned.includes('tel:') && cleaned.includes('href="notes.md#x"') && cleaned.includes('href="https://e.com"') && !cleaned.includes('file:') && cleaned.includes('src="//cdn.e.com/p.png"'), 'Copies keep only safe links and web picture addresses');
+    const tableSection = sectionClipboard(sectionOf(content.querySelector('table')));
+    expect(!tableSection.html.includes('reader-table-wrap') && tableSection.html.includes('<table'), 'A copied section holds its tables without the reader wrapper');
+    expect(rt('toast.sectionMissing', 'a$&b') === window.READER_STRINGS.en['toast.sectionMissing'].replace('{0}', function() { return 'a$&b'; }), 'Arguments with $ stay literal text');
     window.__messages.length = 0;
     settings(); row('Copy HTML').click();
     const copyMessage = window.__messages.find(message => message.startsWith('copyHtml:'));
@@ -237,6 +245,8 @@ async () => {
     expect(documentRelativeUrl('img/a b.png', base) === base + 'img/a%20b.png' && documentRelativeUrl('./x/../y.png', base) === base + 'y.png', 'Relative image paths map into the document folder');
     expect(['..%2f..%2fx.png', 'a%5Cb.png', 'x/%2e%2e/y.png', '..%20/x.png', '.../x.png', 'x.png:stream', 'dir./x.png', 'con.png', 'img/NUL', 'COM1.png', 'con.tar.png', 'conin$.png', 'CONOUT$', 'com².png', 'lpt¹.png'].every(src => documentRelativeUrl(src, base) === null) && documentRelativeUrl('console.png', base) === base + 'console.png', 'Encoded separators, dot segments and device names cannot leave the folder');
     expect(['../up.png', '/root.png', 'C:\\x.png', 'https://e.com/a.png', 'data:image/png;base64,AA', '//host/a.png', ''].every(src => documentRelativeUrl(src, base) === null) && documentRelativeUrl('a.png', '') === null, 'Absolute, external and escaping paths are left alone');
+    await render('<style>@import url(https://e.com/s.css);</style>\n\n<svg><image href="https://e.com/i.png"/></svg>\n\n<span style="background:\\75rl(https://e.com/x.png)">esc</span>\n', '36');
+    expect(!content.querySelector('style') && !content.querySelector('svg image[href]') && !content.querySelector('span[style]'), 'Style sheets, SVG references and escaped styles cannot fetch on render');
     // Network images are never fetched on their own: the sanitizer moves the URL aside, a button loads it
     await render('![chart](https://example.com/chart.png)\n\n<img src="//cdn.example.com/p.gif" srcset="https://e.com/a.png 2x" style="background:url(https://e.com/t.png)">\n\n![local](data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==)\n', '35');
     const remote = [...content.querySelectorAll('img[data-remote-src]')];

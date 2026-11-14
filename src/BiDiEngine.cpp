@@ -116,8 +116,10 @@ std::string BiDiEngine::DocumentLanguage(std::string_view utf8Text) {
     while (end > 0 && end < utf8Text.size() && (static_cast<unsigned char>(utf8Text[end]) & 0xC0) == 0x80) --end; // whole characters
     size_t latin = 0, cyrillic = 0, arabic = 0, hebrew = 0;
     bool persian = false, inTag = false;
-    for (const wchar_t ch : Utf8ToWide(utf8Text.substr(0, end))) {
-        if (ch == L'<') inTag = true;
+    const std::wstring text = Utf8ToWide(utf8Text.substr(0, end));
+    for (size_t i = 0; i < text.size(); ++i) {
+        const wchar_t ch = text[i], next = i + 1 < text.size() ? text[i + 1] : L'\0';
+        if (ch == L'<' && (iswalpha(next) || next == L'/' || next == L'!')) inTag = true;
         else if (ch == L'>') inTag = false;
         else if (inTag) continue;
         else if ((ch >= L'A' && ch <= L'Z') || (ch >= L'a' && ch <= L'z') || (ch >= 0xC0 && ch <= 0x24F && ch != 0xD7 && ch != 0xF7)) ++latin;

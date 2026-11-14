@@ -114,6 +114,7 @@ private:
     bool m_isPanelRegistered = false;
     bool m_isPanelVisible = false;
     bool m_userClosedPanel = false;
+    bool m_documentStateWarningReported = false; // a failing documents.ini is reported once per session
     bool m_nativeLanguageRussian = false; // Notepad++ itself is shown in Russian
     bool m_restorePanelOnStartup = false; // the panel was open when Notepad++ closed (used when auto-show is off)
     HFONT m_statusFont = nullptr;

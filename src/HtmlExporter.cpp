@@ -544,7 +544,17 @@ const char* ImageMimeType(std::wstring extension) {
 // Pictures the reader loaded from the document's folder (its virtual host) become data: URIs, so a shared file
 // keeps them; one that cannot be read (missing, too large, unknown type) keeps its path relative to the document.
 // The path comes from the reader's message, so it is checked again here: no "..", no drive, no stream, no device.
+namespace {
+// The real location of an open file or folder: symbolic links and junctions resolved.
+std::wstring FinalPath(HANDLE handle) {
+    wchar_t buffer[4 * MAX_PATH];
+    const DWORD length = GetFinalPathNameByHandleW(handle, buffer, static_cast<DWORD>(std::size(buffer)), FILE_NAME_NORMALIZED);
+    return length && length < std::size(buffer) ? std::wstring(buffer, length) : std::wstring();
+}
+}
+
 std::string HtmlExporter::EmbedDocumentImages(const std::string& htmlUtf8, const std::wstring& folder) {
+    std::wstring root; // the document folder's real path + '\\', resolved on the first picture
     const std::string marker = std::string("src=\"") + kDocumentHostUrlUtf8;
     std::string out;
     size_t position = 0;
@@ -565,7 +575,16 @@ std::string HtmlExporter::EmbedDocumentImages(const std::string& htmlUtf8, const
             const std::wstring file = folder + L"\\" + path;
             HANDLE handle = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
             LARGE_INTEGER size = {};
-            if (handle != INVALID_HANDLE_VALUE && GetFileSizeEx(handle, &size) && size.QuadPart > 0 && size.QuadPart <= 8 * 1024 * 1024) {
+            if (handle != INVALID_HANDLE_VALUE && root.empty()) {
+                HANDLE directory = CreateFileW(folder.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                               nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+                if (directory != INVALID_HANDLE_VALUE) { root = FinalPath(directory) + L"\\"; CloseHandle(directory); }
+            }
+            // a link inside the folder may point anywhere: its target must still be inside before it is shared
+            const std::wstring real = handle != INVALID_HANDLE_VALUE ? FinalPath(handle) : std::wstring();
+            const bool inside = root.size() > 1 && real.size() > root.size() &&
+                                CompareStringOrdinal(real.c_str(), static_cast<int>(root.size()), root.c_str(), static_cast<int>(root.size()), TRUE) == CSTR_EQUAL;
+            if (inside && GetFileSizeEx(handle, &size) && size.QuadPart > 0 && size.QuadPart <= 8 * 1024 * 1024) {
                 std::string bytes(static_cast<size_t>(size.QuadPart), '\0');
                 DWORD read = 0;
                 if (ReadFile(handle, bytes.data(), static_cast<DWORD>(bytes.size()), &read, nullptr) && read == bytes.size())

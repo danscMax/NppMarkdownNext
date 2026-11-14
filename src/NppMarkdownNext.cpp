@@ -844,10 +844,6 @@ void NppMarkdownNext::SaveAsHtml(const std::wstring& requestId, const ExportCont
         ReportExportResult(L"saveAsHtml", {OperationStatus::Failed, ERROR_INVALID_HANDLE, Tr("export.noDocSave")}, requestId);
         return;
     }
-    std::string textUtf8 = GetScintillaText(hSci);
-    std::wstring wideText = BiDiEngine::Utf8ToWide(textUtf8);
-    MarkdownDocument doc = MarkdownParser::Parse(wideText);
-
     wchar_t fileName[MAX_PATH] = L"export.html";
     // Suggest the document's own name (report.md -> report.html) instead of a generic one.
     {
@@ -873,7 +869,7 @@ void NppMarkdownNext::SaveAsHtml(const std::wstring& requestId, const ExportCont
         OperationResult result = content.present
             ? HtmlExporter::SaveRenderedToFile(fileName, HtmlExporter::EmbedDocumentImages(content.htmlUtf8, GetCurrentDocumentFolder()),
                                                title, exportTheme, m_config.beardedVariant)
-            : HtmlExporter::SaveToFile(fileName, doc, title, exportTheme, m_config.beardedVariant);
+            : HtmlExporter::SaveToFile(fileName, MarkdownParser::Parse(BiDiEngine::Utf8ToWide(GetScintillaText(hSci))), title, exportTheme, m_config.beardedVariant);
         ReportExportResult(L"saveAsHtml", result, requestId);
     } else {
         DWORD error = CommDlgExtendedError();
@@ -964,14 +960,17 @@ std::wstring NppMarkdownNext::LoadDocumentState(DocumentState kind, const std::w
 // Keeps the value for the session even when the file cannot be written (and says so).
 // shortcut: entries of deleted files are never pruned (~100 bytes each); add LRU pruning if the file ever grows large.
 void NppMarkdownNext::StoreDocumentState(DocumentState kind, const std::wstring& path, const std::wstring& value) {
-    m_documentStateCache[std::wstring(Spec(kind).section) + L"/" + DocumentKey(path)] = value;
+    std::wstring& cached = m_documentStateCache[std::wstring(Spec(kind).section) + L"/" + DocumentKey(path)];
+    if (cached == value) return;
+    cached = value;
     if (m_documentStatePath.empty()) return;
     if (!WritePrivateProfileStringW(Spec(kind).section, DocumentKey(path).c_str(), value.empty() ? nullptr : value.c_str(), m_documentStatePath.c_str())) {
         const DWORD error = GetLastError();
         NppLog("StoreDocumentState: write failed error=%lu", error);
-        if (m_webViewViewer.IsPageReady())
-            m_webViewViewer.ReportOperationResult(L"saveSettings", {OperationStatus::Failed, error,
-                Tr("save.stateFailed")});
+        if (!m_documentStateWarningReported && m_webViewViewer.IsPageReady()) {
+            m_webViewViewer.ReportOperationResult(L"saveSettings", {OperationStatus::Failed, error, Tr("save.stateFailed")});
+            m_documentStateWarningReported = true;
+        }
     }
 }
 
@@ -1089,7 +1088,7 @@ void NppMarkdownNext::OpenLink(const std::wstring& href) {
         if (fragment.empty()) return;
         // the document on screen scrolls now; another one once its first render is posted (ExecuteRender)
         if (alreadyShown) m_webViewViewer.ScrollToAnchor(fragment);
-        else { m_pendingAnchorPath = full; m_pendingAnchor = fragment; }
+        else if (m_config.IsExtensionSupported(extension)) { m_pendingAnchorPath = full; m_pendingAnchor = fragment; }
     }
 }
 

@@ -204,8 +204,13 @@ function codeText(pre) {
 // it aside). Shared by Copy table, Copy section and the HTML export.
 var READER_DECORATIONS = '.reader-col-grip, .reader-copy-code, .reader-remote-image, .reader-image-missing, .reader-table-filter, .reader-legacy-anchor';
 var READER_ATTRIBUTES = ['data-line', 'data-source-unmapped', 'data-task-key', 'data-highlighted', 'data-local-path'];
+// Copies are built in a document without a window: pictures there never load, so copying or exporting fetches
+// nothing the reader has not shown. Links keep only what a shared file may (LinkPolicy.h IsSafeLinkScheme):
+// web, mail, in-page and relative targets.
+var readerInertDocument = document.implementation.createHTMLDocument('');
+var READER_SAFE_LINK = /^(?:(?:https?|mailto):|[^:]*(?:[\/?#]|$))/i;
 function cleanReaderClone(node) {
-    var clone = node.cloneNode(true);
+    var clone = readerInertDocument.importNode(node, true);
     var all = [clone].concat(Array.from(clone.querySelectorAll('*')));
     clone.querySelectorAll(READER_DECORATIONS).forEach(function(element) { element.remove(); });
     clone.querySelectorAll('.reader-table-wrap').forEach(function(wrap) { wrap.replaceWith.apply(wrap, Array.from(wrap.childNodes)); });
@@ -214,10 +219,16 @@ function cleanReaderClone(node) {
         READER_ATTRIBUTES.forEach(function(name) { element.removeAttribute(name); });
         if (element.matches('table, th, td, tr')) element.removeAttribute('style');
         if (element.matches('tr[hidden]')) element.removeAttribute('hidden');
-        if (element.matches('img[data-remote-src]')) { element.setAttribute('src', element.getAttribute('data-remote-src')); element.removeAttribute('data-remote-src'); }
+        if (element.matches('img[data-remote-src]')) {
+            var remote = element.getAttribute('data-remote-src');
+            element.removeAttribute('data-remote-src');
+            if (/^(?:https?:)?\/\//i.test(remote)) element.setAttribute('src', remote); // the address the reader moved aside
+        }
+        if (element.matches('a[href]') && !READER_SAFE_LINK.test(element.getAttribute('href').trim())) element.removeAttribute('href');
         element.classList && element.classList.remove('caret-target');
     });
-    return clone;
+    // a top-level table is its own wrapper: the copy is the table itself
+    return clone.matches && clone.matches('.reader-table-wrap') ? clone.querySelector('table') || clone : clone;
 }
 function tableClipboard(table) {
     var clone = cleanReaderClone(table);
@@ -301,13 +312,14 @@ function renderedText(node) {
     probe.className = 'doc';
     probe.removeAttribute('id');
     probe.style.cssText = 'position:fixed;left:-100000px;top:0;width:800px';
+    probe.querySelectorAll('[src]').forEach(function(element) { element.removeAttribute('src'); }); // text only: nothing loads on the way
     document.body.appendChild(probe);
     var text = probe.innerText.trim();
     probe.remove();
     return text;
 }
 function sectionClipboard(section) {
-    var holder = document.createElement('div');
+    var holder = readerInertDocument.createElement('div');
     section.nodes.forEach(function(node) { holder.appendChild(cleanReaderClone(node)); });
     return {html: holder.innerHTML, text: renderedText(holder)};
 }

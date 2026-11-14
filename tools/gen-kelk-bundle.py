@@ -470,7 +470,11 @@ controller_js = r"""
       if (node.hasAttribute('srcset')) node.removeAttribute('srcset');
       ['poster', 'background'].forEach(function(name) { if (node.hasAttribute(name)) node.removeAttribute(name); });
       if (/^(?:VIDEO|AUDIO|SOURCE|TRACK|INPUT)$/.test(node.nodeName) && REMOTE_URL.test(node.getAttribute('src') || '')) node.removeAttribute('src');
-      if (/url\s*\(/i.test(node.getAttribute('style') || '')) node.removeAttribute('style');
+      if (node.namespaceURI === 'http://www.w3.org/2000/svg' && node.nodeName.toLowerCase() !== 'a') {
+        ['href', 'xlink:href'].forEach(function(name) { if (REMOTE_URL.test(node.getAttribute(name) || '')) node.removeAttribute(name); });
+      }
+      // url(), image-set() and CSS escapes (which can spell either) never reach the page
+      if (/url\s*\(|image-set|\\/i.test(node.getAttribute('style') || '')) node.removeAttribute('style');
     });
   }
 
@@ -786,7 +790,7 @@ controller_js = r"""
 
       var html = parseWithLines(mdText);
       if (typeof DOMPurify !== 'undefined' && typeof DOMPurify.sanitize === 'function') {
-        html = DOMPurify.sanitize(html, { ADD_ATTR: ['data-line', 'data-source-unmapped', 'data-task-key', 'data-remote-src', 'data-local-path', 'target', 'dir', 'align'] });
+        html = DOMPurify.sanitize(html, { FORBID_TAGS: ['style'], ADD_ATTR: ['data-line', 'data-source-unmapped', 'data-task-key', 'data-remote-src', 'data-local-path', 'target', 'dir', 'align'] });
       }
 
       contentEl.innerHTML = html;
