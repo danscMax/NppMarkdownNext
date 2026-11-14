@@ -497,7 +497,7 @@ std::string HtmlExporter::WrapDocument(const std::string& bodyHtmlUtf8, const st
     }
 
     std::stringstream html;
-    html << "<!DOCTYPE html>\n<html lang=\"en\" data-theme=\"" << (isDark ? "dark" : "light") << "\">\n<head>\n";
+    html << "<!DOCTYPE html>\n<html lang=\"" << BiDiEngine::DocumentLanguage(bodyHtmlUtf8) << "\" data-theme=\"" << (isDark ? "dark" : "light") << "\">\n<head>\n";
     html << "<meta charset=\"UTF-8\">\n";
     html << "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n";
     html << "<title>" << WideToUtf8(title) << "</title>\n";
@@ -515,22 +515,6 @@ std::string HtmlExporter::WrapDocument(const std::string& bodyHtmlUtf8, const st
 }
 
 namespace {
-std::string Base64(const std::string& bytes) {
-    static constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    out.reserve((bytes.size() + 2) / 3 * 4);
-    for (size_t i = 0; i < bytes.size(); i += 3) {
-        const unsigned value = (static_cast<unsigned char>(bytes[i]) << 16) |
-                               (i + 1 < bytes.size() ? static_cast<unsigned char>(bytes[i + 1]) << 8 : 0) |
-                               (i + 2 < bytes.size() ? static_cast<unsigned char>(bytes[i + 2]) : 0);
-        out += alphabet[(value >> 18) & 63];
-        out += alphabet[(value >> 12) & 63];
-        out += i + 1 < bytes.size() ? alphabet[(value >> 6) & 63] : '=';
-        out += i + 2 < bytes.size() ? alphabet[value & 63] : '=';
-    }
-    return out;
-}
-
 // "%D0%BF%20x&amp;y" -> UTF-8 bytes "п x&y" (an attribute value as innerHTML serializes it, percent-encoded by the reader)
 std::string DecodeAttributeUrl(const std::string& value) {
     std::string unescaped;
@@ -585,7 +569,7 @@ std::string HtmlExporter::EmbedDocumentImages(const std::string& htmlUtf8, const
                 std::string bytes(static_cast<size_t>(size.QuadPart), '\0');
                 DWORD read = 0;
                 if (ReadFile(handle, bytes.data(), static_cast<DWORD>(bytes.size()), &read, nullptr) && read == bytes.size())
-                    replacement = std::string("data:") + mime + ";base64," + Base64(bytes);
+                    replacement = std::string("data:") + mime + ";base64," + BiDiEngine::Base64Encode(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
             }
             if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
         }

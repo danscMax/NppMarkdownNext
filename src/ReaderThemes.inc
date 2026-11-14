@@ -970,7 +970,7 @@ function applyReaderSettings(data) {
     window._autoShowPanel = !!data.autoShow;
     if (LANGUAGE_NAMES[data.language]) window._language = data.language;
     window._languageSetting = LANGUAGE_NAMES[data.languageSetting] ? data.languageSetting : 'auto';
-    document.documentElement.dataset.uiLanguage = window._language;
+    document.documentElement.dataset.uiLanguage = document.documentElement.lang = window._language;
     localizeStatic();
     if (readingPresets('fontSize').includes(data.fontSizePx)) window._fontSizePx = data.fontSizePx;
     if (readingPresets('lineHeight').includes(data.lineHeightPercent)) window._lineHeightPercent = data.lineHeightPercent;
@@ -994,6 +994,8 @@ if (window.chrome && window.chrome.webview) {
             nativeDark = !!data.isDark;
             window._themeId = data.themeId || window._themeId || 'follow';
             applyThemeClass(window._themeId);
+            var content = document.getElementById('content');
+            if (data.type === 'render' && content) content.lang = data.lang || '';
             refreshThemePopover();
         } else if (data.type === 'settings') {
             applyReaderSettings(data);

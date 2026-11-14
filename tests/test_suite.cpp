@@ -49,6 +49,16 @@ void TestHeadingIds() {
 void TestBiDiEngine() {
     std::cout << "[TEST] BiDiEngine..." << std::endl;
 
+    // 0. Document language by script; markup and code do not outvote the prose
+    assert(BiDiEngine::DocumentLanguage("") == "en");
+    assert(BiDiEngine::DocumentLanguage("# Hello world") == "en");
+    assert(BiDiEngine::DocumentLanguage("<p class=\"lead\">Привет, мир</p>") == "ru");
+    assert(BiDiEngine::DocumentLanguage("# План работ\n\nНужно `npm test` запустить") == "ru");
+    assert(BiDiEngine::DocumentLanguage("سلام دنیا، گفتگو") == "fa");
+    assert(BiDiEngine::DocumentLanguage("مرحبا بالعالم") == "ar");
+    assert(BiDiEngine::DocumentLanguage("שלום עולם") == "he");
+    assert(BiDiEngine::DocumentLanguage(std::string(70000, 'a') + "яяя") == "en"); // only the start is read
+
     // 1. RTL char detection
     assert(BiDiEngine::IsRTLChar(0x06AF)); // گ
     assert(BiDiEngine::IsRTLChar(0x0686)); // چ
@@ -359,6 +369,8 @@ void TestHtmlExporter() {
         assert(embedded.find(kDocumentHostUrlUtf8) == std::string::npos);
         const std::string page = HtmlExporter::WrapDocument(embedded, "", L"T", PreviewTheme::Light, 0, L"", false);
         assert(page.find("<script") == std::string::npos && page.find("UE5HREFUQQ==") != std::string::npos);
+        assert(page.find("<html lang=\"en\"") != std::string::npos);
+        assert(HtmlExporter::WrapDocument("<p>Привет</p>", "", L"T", PreviewTheme::Light, 0, L"", false).find("<html lang=\"ru\"") != std::string::npos);
         DeleteFileW(picture.c_str());
         RemoveDirectoryW(folder);
     }

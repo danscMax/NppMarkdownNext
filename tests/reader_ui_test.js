@@ -451,6 +451,8 @@ async () => {
     const ru = window.READER_STRINGS.ru, en = window.READER_STRINGS.en;
     window.__emit({type:'render',markdown:'# Заголовок\n\n```js\nx\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n',bufferId:'31',caretLine:-1,renderRevision:'lang1',title:'Lang',isDark:true,isBiDi:true,themeId:window._themeId});
     await new Promise(requestAnimationFrame); finishAnimations();
+    window.__emit(Object.assign({}, window.__lastRender, {lang: 'ru'})); await new Promise(requestAnimationFrame);
+    expect(document.getElementById('content').lang === 'ru' && document.documentElement.lang === 'en', 'Content carries the document language, the page the interface language');
     settings();
     expect(row(en['set.language'].replace('{0}', en['set.languageAuto'])), 'Language row shows the Auto setting');
     row(en['set.language'].split('{0}')[0]).click(); finishAnimations();

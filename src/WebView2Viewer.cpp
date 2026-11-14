@@ -762,6 +762,7 @@ bool WebView2Viewer::UpdateMarkdown(const std::string& markdownUtf8, const std::
          << L",\"isBiDi\":" << (isBiDi ? L"true" : L"false")
          << L",\"caretLine\":" << caretLine
          << L",\"bufferId\":\"" << EscapeJsonString(bufferId) << L"\""
+         << L",\"lang\":\"" << BiDiEngine::Utf8ToWide(BiDiEngine::DocumentLanguage(markdownUtf8)) << L"\""
          << L",\"renderRevision\":\"" << sequence << L"\""
          << L",\"docBase\":\"" << (m_documentFolder.empty() ? L"" : std::wstring(L"https://") + kDocumentHost + L"/") << L"\""
          << L"}";
