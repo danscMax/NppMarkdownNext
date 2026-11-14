@@ -224,6 +224,10 @@ async () => {
     const beforeTypography = window.__messages.length;
     setTypographyFromMenu('fontSize', 999);
     expect(window.__messages.length === beforeTypography, 'Typography rejects unbounded CSS values');
+    setTypographyFromMenu('readingWidth', 0);
+    await settled();
+    const pane = document.getElementById('reader-wrap'), paneInner = pane.clientWidth - parseFloat(getComputedStyle(pane).paddingLeft) - parseFloat(getComputedStyle(pane).paddingRight);
+    expect(Math.abs(document.getElementById('content').getBoundingClientRect().width - paneInner) < 2 && document.getElementById('theme-pop-list').textContent.includes('Whole pane'), 'Reading width "Whole pane" uses the full panel');
     for (const [kind, value] of [['fontSize',15],['lineHeight',170],['readingWidth',860]]) setTypographyFromMenu(kind,value);
 
     await render('# Same\n\n# Same\n\n# Привет Мир!\n\n# !!!\n');

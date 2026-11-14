@@ -436,6 +436,14 @@ struct ReaderLifecycleTestPeer {
         fixture.Tick();
         assert(fixture.Count(L"\"type\":\"render\"") == 1 && fixture.Count(L"Edited notes") == 1);
         assert(fixture.Count(L"\"docBase\":\"https://npp-reader-document.local/\"") == 0); // no webview in the test: no mapping
+
+        // Reading width presets come from one list: 0 (the whole pane) is a valid choice, other values are not
+        host.OnSettingsMessage(L"readingWidth:0");
+        assert(host.m_config.contentMaxWidthPx == 0);
+        host.OnSettingsMessage(L"readingWidth:999");
+        assert(host.m_config.contentMaxWidthPx == 0);
+        host.OnSettingsMessage(L"readingWidth:860");
+        assert(host.m_config.contentMaxWidthPx == 860);
     }
 
     static void LinksOpenOnlySafeTargets() {

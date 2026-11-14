@@ -561,6 +561,17 @@ function zoomPercentLabel() {
     return (window._zoomPercent || 100) + '%';
 }
 
+// Reading presets come from themes/reader-settings.json (READER_SETTINGS), the same lists the host validates.
+function readingPresets(kind) {
+    var key = {fontSize: 'fontSizePx', lineHeight: 'lineHeightPercent', readingWidth: 'maxWidthPx'}[kind];
+    return window.READER_SETTINGS.presets[key] || [];
+}
+function presetLabel(kind, value) {
+    if (kind === 'lineHeight') return value + '%';
+    if (kind === 'readingWidth' && value === 0) return 'Whole pane';
+    return value + 'px';
+}
+
 function darkModeLabel() {
     if (window._darkMode === 0) return 'Light';
     if (window._darkMode === 1) return 'Dark';
@@ -592,13 +603,13 @@ function refreshThemePopover() {
         html += themePopRow('< Back', 'backToThemeList()', false, false, '__back');
         html += themePopRow('Text size: ' + window._fontSizePx + 'px', "openThemeView('fontSize')", false, true);
         html += themePopRow('Line height: ' + window._lineHeightPercent + '%', "openThemeView('lineHeight')", false, true);
-        html += themePopRow('Reading width: ' + window._maxWidthPx + 'px', "openThemeView('readingWidth')", false, true);
+        html += themePopRow('Reading width: ' + presetLabel('readingWidth', window._maxWidthPx), "openThemeView('readingWidth')", false, true);
     } else if (['fontSize', 'lineHeight', 'readingWidth'].includes(_themePopView)) {
-        var presets = _themePopView === 'fontSize' ? [15, 17, 19] : (_themePopView === 'lineHeight' ? [150, 170, 190] : [680, 860, 1100]);
+        var presets = readingPresets(_themePopView);
         var field = _themePopView === 'fontSize' ? '_fontSizePx' : (_themePopView === 'lineHeight' ? '_lineHeightPercent' : '_maxWidthPx');
         if (title) title.textContent = _themePopView === 'fontSize' ? 'Text size' : (_themePopView === 'lineHeight' ? 'Line height' : 'Reading width');
         html += themePopRow('< Back', "openThemeView('typography')", false, false, '__back');
-        presets.forEach(function(value) { html += themePopRow(value + (_themePopView === 'lineHeight' ? '%' : 'px'), "setTypographyFromMenu('" + _themePopView + "'," + value + ')', window[field] === value, false); });
+        presets.forEach(function(value) { html += themePopRow(presetLabel(_themePopView, value), "setTypographyFromMenu('" + _themePopView + "'," + value + ')', window[field] === value, false); });
     } else if (_themePopView === 'zoom') {
         if (title) title.textContent = 'Zoom (' + zoomPercentLabel() + ')';
         html += themePopRow('< Back', 'backToThemeList()', false, false, '__back');
@@ -618,7 +629,7 @@ function refreshThemePopover() {
     } else if (_themePopView === 'about') {
         if (title) title.textContent = 'About';
         html += themePopRow('< Back', 'backToThemeList()', false, false, '__back');
-        html += themePopRow('NppMarkdownNext v1.6.0', '', false, false);
+        html += themePopRow('NppMarkdownNext v' + window.READER_SETTINGS.version, '', false, false);
         html += themePopRow('Open project page', "location.href='https://github.com/theneet0/NppMarkdownNext';", false, false);
     } else if (_themePopView === 'bearded') {
         if (title) title.textContent = 'Bearded themes';
@@ -796,7 +807,7 @@ function setDarkModeFromMenu(mode) {
 }
 
 function setTypographyFromMenu(kind, value) {
-    var options = {fontSize: {values: [15, 17, 19], command: 'readingFontSize:', field: '_fontSizePx'}, lineHeight: {values: [150, 170, 190], command: 'readingLineHeight:', field: '_lineHeightPercent'}, readingWidth: {values: [680, 860, 1100], command: 'readingWidth:', field: '_maxWidthPx'}};
+    var options = {fontSize: {values: readingPresets('fontSize'), command: 'readingFontSize:', field: '_fontSizePx'}, lineHeight: {values: readingPresets('lineHeight'), command: 'readingLineHeight:', field: '_lineHeightPercent'}, readingWidth: {values: readingPresets('readingWidth'), command: 'readingWidth:', field: '_maxWidthPx'}};
     var option = options[kind];
     if (!option || !option.values.includes(value)) return;
     if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage(option.command + value);
@@ -808,7 +819,7 @@ function applyContentTypography() {
     if (!content) return;
     content.style.setProperty('--reader-font-size', window._fontSizePx + 'px');
     content.style.setProperty('--reader-line-height', window._lineHeightPercent / 100);
-    content.style.setProperty('--reader-max-width', window._maxWidthPx + 'px');
+    content.style.setProperty('--reader-max-width', window._maxWidthPx ? window._maxWidthPx + 'px' : '100cqw'); // 0 = the whole pane
     scheduleCurrentSection();
 }
 
@@ -919,9 +930,9 @@ function applyReaderSettings(data) {
     window._darkMode = data.darkMode;
     window._zoomPercent = data.zoomPercent;
     window._autoShowPanel = !!data.autoShow;
-    if ([15, 17, 19].includes(data.fontSizePx)) window._fontSizePx = data.fontSizePx;
-    if ([150, 170, 190].includes(data.lineHeightPercent)) window._lineHeightPercent = data.lineHeightPercent;
-    if ([680, 860, 1100].includes(data.maxWidthPx)) window._maxWidthPx = data.maxWidthPx;
+    if (readingPresets('fontSize').includes(data.fontSizePx)) window._fontSizePx = data.fontSizePx;
+    if (readingPresets('lineHeight').includes(data.lineHeightPercent)) window._lineHeightPercent = data.lineHeightPercent;
+    if (readingPresets('readingWidth').includes(data.maxWidthPx)) window._maxWidthPx = data.maxWidthPx;
     applyContentTypography();
     document.body.classList.toggle('toc-open', !!data.outline);
     var drawer = document.getElementById('toc-drawer');

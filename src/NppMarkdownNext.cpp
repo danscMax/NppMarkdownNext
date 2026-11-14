@@ -5,6 +5,9 @@
 #include "../include/NppLog.h"
 #include "../include/ThemeCatalog.h"
 #include "../include/LinkPolicy.h"
+#include "../include/Version.h"
+#include "../include/ReaderPresets.inc"
+#include <optional>
 #include <commctrl.h>
 #include <shlwapi.h>
 #include <commdlg.h>
@@ -55,9 +58,10 @@ bool IsTaskMarker(const std::string& line, size_t column, char expectedState) {
         (offset + 3 == line.size() || line[offset + 3] == ' ' || line[offset + 3] == '\t');
 }
 
-int ReadingMessageValue(const std::wstring& message, const wchar_t* prefix, std::initializer_list<int> choices) {
+// A preset value from "<prefix><value>", only if it is one of the offered choices (0 is a valid width: the whole pane).
+template <size_t N> std::optional<int> ReadingMessageValue(const std::wstring& message, const wchar_t* prefix, const int (&choices)[N]) {
     for (int value : choices) if (message == std::wstring(prefix) + std::to_wstring(value)) return value;
-    return 0;
+    return std::nullopt;
 }
 
 struct ExportScope {
@@ -632,12 +636,12 @@ void NppMarkdownNext::OnSettingsMessage(const std::wstring& message) {
         if (m_config.theme != ReaderTheme::FollowNpp) { SyncUiState(); return; }
         m_config.darkModeOverride = message == L"darkMode:-1" ? -1 : (message == L"darkMode:1" ? 1 : 0);
         m_webViewViewer.SetTheme(IsDarkThemeEffective(), m_config.ThemeId());
-    } else if (int value = ReadingMessageValue(message, L"readingFontSize:", {15, 17, 19})) {
-        m_config.contentFontSizePx = value;
-    } else if (int value = ReadingMessageValue(message, L"readingLineHeight:", {150, 170, 190})) {
-        m_config.contentLineHeightPercent = value;
-    } else if (int value = ReadingMessageValue(message, L"readingWidth:", {680, 860, 1100})) {
-        m_config.contentMaxWidthPx = value;
+    } else if (auto value = ReadingMessageValue(message, L"readingFontSize:", kFontSizePresets)) {
+        m_config.contentFontSizePx = *value;
+    } else if (auto value = ReadingMessageValue(message, L"readingLineHeight:", kLineHeightPresets)) {
+        m_config.contentLineHeightPercent = *value;
+    } else if (auto value = ReadingMessageValue(message, L"readingWidth:", kReadingWidthPresets)) {
+        m_config.contentMaxWidthPx = *value;
     } else if (message.rfind(L"zoomChange:", 0) == 0) {
         try {
             size_t parsed = 0;
@@ -788,7 +792,7 @@ void NppMarkdownNext::SaveAsHtml(const std::wstring& requestId) {
 void NppMarkdownNext::ShowAbout() {
     const wchar_t* aboutMsg =
         L"NppMarkdownNext (Kelk Reader Edition)\n"
-        L"Version 1.6.0 (x64 / x86 / ARM64)\n\n"
+        L"Version " NPPMD_VERSION_WSTRING L" (x64 / x86 / ARM64)\n\n"
         L"Ultra-lightweight native Markdown live reader panel for Notepad++ based on Kelk.\n\n"
         L"Features:\n"
         L"  • Pure Kelk Markdown Reader Core (GFM Tables, Task Lists, Code Blocks)\n"

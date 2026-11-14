@@ -68,9 +68,9 @@ window.chrome={webview:{addEventListener:function(type,fn){window.__listeners.pu
   window.__state.darkMode=Number(message.slice(9));
   window.__emit({type:'setTheme',themeId:'follow',isDark:window.__state.darkMode!==0});
  }
- if(message.indexOf('readingFontSize:')===0) {var n=Number(message.slice(16));if([15,17,19].includes(n))window.__state.fontSizePx=n;}
- if(message.indexOf('readingLineHeight:')===0) {var n=Number(message.slice(18));if([150,170,190].includes(n))window.__state.lineHeightPercent=n;}
- if(message.indexOf('readingWidth:')===0) {var n=Number(message.slice(13));if([680,860,1100].includes(n))window.__state.maxWidthPx=n;}
+ if(message.indexOf('readingFontSize:')===0) {var n=Number(message.slice(16));if(window.READER_SETTINGS.presets.fontSizePx.includes(n))window.__state.fontSizePx=n;}
+ if(message.indexOf('readingLineHeight:')===0) {var n=Number(message.slice(18));if(window.READER_SETTINGS.presets.lineHeightPercent.includes(n))window.__state.lineHeightPercent=n;}
+ if(message.indexOf('readingWidth:')===0) {var n=Number(message.slice(13));if(window.READER_SETTINGS.presets.maxWidthPx.includes(n))window.__state.maxWidthPx=n;}
  if(message==='zoomIn') window.__state.zoomPercent+=10;
  if(message==='zoomOut') window.__state.zoomPercent-=10;
  if(message==='zoomReset') window.__state.zoomPercent=100;
