@@ -1,12 +1,22 @@
 #include "../include/Config.h"
 #include "../include/ThemeCatalog.h"
+#include "../include/ReaderPresets.inc"
 #include <sstream>
 #include <algorithm>
 #include <iterator>
 
 namespace {
-int ReadingChoice(int value, std::initializer_list<int> choices, int fallback) {
-    return std::find(choices.begin(), choices.end(), value) != choices.end() ? value : fallback;
+template <size_t N> int ReadingChoice(int value, const int (&choices)[N], int fallback) {
+    return std::find(std::begin(choices), std::end(choices), value) != std::end(choices) ? value : fallback;
+}
+
+// GetPrivateProfileInt reads "NaN" as 0, and 0 is a real choice (reading width = the whole pane): parse strictly.
+int ReadStrictInt(const wchar_t* section, const wchar_t* key, int fallback, const std::wstring& path) {
+    wchar_t raw[32] = {};
+    GetPrivateProfileStringW(section, key, L"", raw, 32, path.c_str());
+    wchar_t* end = nullptr;
+    const long value = wcstol(raw, &end, 10);
+    return raw[0] && end && *end == L'\0' ? static_cast<int>(value) : fallback;
 }
 }
 
@@ -76,9 +86,13 @@ void PluginConfig::Load(const std::wstring& configPath) {
     zoomLevel = static_cast<float>(zoomInt) / 100.0f;
     if (zoomLevel < 0.3f) zoomLevel = 0.3f;
     if (zoomLevel > 3.0f) zoomLevel = 3.0f;
-    contentFontSizePx = ReadingChoice(GetPrivateProfileIntW(sec, L"ContentFontSizePx", 15, configPath.c_str()), {15, 17, 19}, 15);
-    contentLineHeightPercent = ReadingChoice(GetPrivateProfileIntW(sec, L"ContentLineHeightPercent", 170, configPath.c_str()), {150, 170, 190}, 170);
-    contentMaxWidthPx = ReadingChoice(GetPrivateProfileIntW(sec, L"ContentMaxWidthPx", 860, configPath.c_str()), {680, 860, 1100}, 860);
+    contentFontSizePx = ReadingChoice(ReadStrictInt(sec, L"ContentFontSizePx", 15, configPath), kFontSizePresets, 15);
+    contentLineHeightPercent = ReadingChoice(ReadStrictInt(sec, L"ContentLineHeightPercent", 170, configPath), kLineHeightPresets, 170);
+    contentMaxWidthPx = ReadingChoice(ReadStrictInt(sec, L"ContentMaxWidthPx", 860, configPath), kReadingWidthPresets, 860);
+    wchar_t language[8] = {};
+    GetPrivateProfileStringW(sec, L"ReaderLanguage", L"auto", language, 8, configPath.c_str());
+    readerLanguage = (std::wstring(language) == L"en" || std::wstring(language) == L"ru") ? language : L"auto";
+    outlineWidthPx = std::clamp(ReadStrictInt(sec, L"OutlineWidthPx", kOutlineWidthDefault, configPath), kOutlineWidthMin, kOutlineWidthMax);
 
     wchar_t buf[512] = { 0 };
     GetPrivateProfileStringW(sec, L"SupportedExtensions", L".md,.markdown,.mdown,.mkd,.rst", buf, 512, configPath.c_str());
@@ -89,7 +103,7 @@ void PluginConfig::Load(const std::wstring& configPath) {
     m_persistedPath = configPath;
     for (const wchar_t* key : {L"IsPanelVisible", L"AutoShowPanel", L"SyncWithCaret", L"ShowOutline", L"DarkModeOverride",
                                L"IsSmartBiDiEnabled", L"Theme", L"BeardedVariant", L"ZoomLevelPercent", L"SupportedExtensions",
-                               L"ContentFontSizePx", L"ContentLineHeightPercent", L"ContentMaxWidthPx"}) {
+                               L"ContentFontSizePx", L"ContentLineHeightPercent", L"ContentMaxWidthPx", L"OutlineWidthPx", L"ReaderLanguage"}) {
         wchar_t raw[512] = {};
         const wchar_t* absent = L"\x1f<absent>";
         GetPrivateProfileStringW(sec, key, absent, raw, 512, configPath.c_str());
@@ -135,6 +149,8 @@ bool PluginConfig::Save(const std::wstring& configPath) const {
     write(L"ContentFontSizePx", std::to_wstring(contentFontSizePx));
     write(L"ContentLineHeightPercent", std::to_wstring(contentLineHeightPercent));
     write(L"ContentMaxWidthPx", std::to_wstring(contentMaxWidthPx));
+    write(L"OutlineWidthPx", std::to_wstring(outlineWidthPx));
+    write(L"ReaderLanguage", readerLanguage);
     if (firstError != ERROR_SUCCESS) {
         SetLastError(firstError);
         return false;

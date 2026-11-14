@@ -1,6 +1,8 @@
 #include "../include/WebView2Viewer.h"
 #include "../include/BiDiEngine.h"
 #include "../include/NppLog.h"
+#include "../include/LinkPolicy.h"
+#include "../include/ReaderText.h"
 #include "../include/Config.h"
 #include "KelkBundle.inc"
 #include "ReaderThemes.inc"
@@ -606,7 +608,10 @@ public:
 
 template <class T> void ReleaseCom(T*& pointer) { if (pointer) { pointer->Release(); pointer = nullptr; } }
 
-constexpr const wchar_t* kDocumentHost = L"npp-reader-document.local";
+}
+
+void WebView2Viewer::ScrollToAnchor(const std::wstring& fragment) {
+    PostJson(L"{\"type\":\"scrollToAnchor\",\"id\":\"" + EscapeJsonString(fragment) + L"\"}");
 }
 
 void WebView2Viewer::PostNotice(const std::wstring& text) {
@@ -632,7 +637,7 @@ bool WebView2Viewer::StartFind(const std::wstring& term) {
         handler->Release();
     }
     ReleaseCom(options); ReleaseCom(environment); ReleaseCom(find); ReleaseCom(webView);
-    if (!started) PostNotice(L"Find in the preview needs a newer Microsoft Edge WebView2 Runtime. Ctrl+F in the editor still works.");
+    if (!started) PostNotice(Tr("runtime.find"));
     return started;
 }
 
@@ -641,7 +646,7 @@ bool WebView2Viewer::ShowPrintDialog() {
     bool shown = m_pWebView && SUCCEEDED(m_pWebView->QueryInterface(IID_ICoreWebView2_16, reinterpret_cast<void**>(&webView))) &&
                  SUCCEEDED(webView->ShowPrintUI(COREWEBVIEW2_PRINT_DIALOG_KIND_BROWSER));
     ReleaseCom(webView);
-    if (!shown) PostNotice(L"Printing needs a newer Microsoft Edge WebView2 Runtime.");
+    if (!shown) PostNotice(Tr("runtime.print"));
     return shown;
 }
 
@@ -658,8 +663,8 @@ void WebView2Viewer::SetDocumentFolder(const std::wstring& folder) {
     ReleaseCom(webView);
 }
 
-void WebView2Viewer::SetTableWidths(const std::wstring& bufferId, const std::wstring& value) {
-    PostJson(L"{\"type\":\"tableWidths\",\"bufferId\":\"" + EscapeJsonString(bufferId) + L"\",\"value\":\"" + EscapeJsonString(value) + L"\"}");
+void WebView2Viewer::SetDocumentState(const std::wstring& kind, const std::wstring& bufferId, const std::wstring& value) {
+    PostJson(L"{\"type\":\"documentState\",\"kind\":\"" + EscapeJsonString(kind) + L"\",\"bufferId\":\"" + EscapeJsonString(bufferId) + L"\",\"value\":\"" + EscapeJsonString(value) + L"\"}");
 }
 
 void WebView2Viewer::SyncUiState(const PluginConfig& config) {
@@ -674,7 +679,10 @@ void WebView2Viewer::SyncUiState(const PluginConfig& config) {
          << L",\"outline\":" << (config.showOutline ? L"true" : L"false")
          << L",\"fontSizePx\":" << config.contentFontSizePx
          << L",\"lineHeightPercent\":" << config.contentLineHeightPercent
-         << L",\"maxWidthPx\":" << config.contentMaxWidthPx << L"}";
+         << L",\"maxWidthPx\":" << config.contentMaxWidthPx
+         << L",\"outlineWidthPx\":" << config.outlineWidthPx
+         << L",\"language\":\"" << (ReaderTextRussian() ? L"ru" : L"en") << L"\""
+         << L",\"languageSetting\":\"" << EscapeJsonString(config.readerLanguage) << L"\"}";
     PostJson(json.str());
 }
 
@@ -754,6 +762,7 @@ bool WebView2Viewer::UpdateMarkdown(const std::string& markdownUtf8, const std::
          << L",\"isBiDi\":" << (isBiDi ? L"true" : L"false")
          << L",\"caretLine\":" << caretLine
          << L",\"bufferId\":\"" << EscapeJsonString(bufferId) << L"\""
+         << L",\"lang\":\"" << BiDiEngine::Utf8ToWide(BiDiEngine::DocumentLanguage(markdownUtf8)) << L"\""
          << L",\"renderRevision\":\"" << sequence << L"\""
          << L",\"docBase\":\"" << (m_documentFolder.empty() ? L"" : std::wstring(L"https://") + kDocumentHost + L"/") << L"\""
          << L"}";
@@ -768,8 +777,9 @@ bool WebView2Viewer::UpdateMarkdown(const std::string& markdownUtf8, const std::
 }
 
 void WebView2Viewer::OnWebMessageReceived(const std::wstring& message) {
-    std::string msgUtf8 = BiDiEngine::WideToUtf8(message);
-    NppLog("OnWebMessageReceived: %s", msgUtf8.c_str());
+    // Only the command name: payloads carry link targets, search text and document paths.
+    const std::string command = BiDiEngine::WideToUtf8(message.substr(0, (std::min)(message.find(L':'), static_cast<size_t>(40))));
+    NppLog("OnWebMessageReceived: %s (%u chars)", command.c_str(), static_cast<unsigned>(message.size()));
 
     const std::wstring prefixError = L"jsError:";
     if (message.find(prefixError) == 0) {

@@ -9,6 +9,12 @@
 #include "WebView2Viewer.h"
 #include "MarkdownParser.h"
 
+// Rendered body + plain text the reader sent with an export request (absent: the native parser renders).
+struct HtmlExportContent { bool present = false; std::string htmlUtf8; std::wstring text; };
+
+// Reader state remembered per document (column widths, reading place), see NppMarkdownNext.documents.ini.
+enum class DocumentState { TableWidths = 0, ReadingPosition = 1 };
+
 class NppMarkdownNext {
 public:
     static NppMarkdownNext& Instance();
@@ -24,8 +30,10 @@ public:
     void ZoomIn();
     void ZoomOut();
     void ZoomReset();
-    void CopyRenderedHtml(const std::wstring& requestId = L"");
-    void SaveAsHtml(const std::wstring& requestId = L"");
+    using ExportContent = HtmlExportContent;
+    void RequestHtmlExport(const std::wstring& operation);
+    void CopyRenderedHtml(const std::wstring& requestId = L"", const ExportContent& content = {});
+    void SaveAsHtml(const std::wstring& requestId = L"", const ExportContent& content = {});
     void ShowAbout();
     void OpenSettings();
 
@@ -67,18 +75,22 @@ private:
     bool IsDarkThemeEffective() const;
     void SyncUiState();
     bool SaveConfig(bool notifyUser = true);
-    void QueueExport(const std::wstring& operation, const std::wstring& requestId);
+    void QueueExport(const std::wstring& operation, const std::wstring& requestId, ExportContent content = {});
     void FinishExport();
     void ReportExportResult(const std::wstring& operation, const OperationResult& result, const std::wstring& requestId);
     void ShowExportWarning(const std::wstring& message);
     void HandleCheckboxToggle(const CheckboxRequest& request);
     void OnSettingsMessage(const std::wstring& message);
-    std::wstring LoadTableWidths(const std::wstring& path) const;
-    void SaveTableWidths(const std::wstring& message);
+    std::wstring LoadDocumentState(DocumentState kind, const std::wstring& path) const;
+    void StoreDocumentState(DocumentState kind, const std::wstring& path, const std::wstring& value);
+    void SaveDocumentStateMessage(DocumentState kind, const std::wstring& message);
+    void CopyDocumentState(const std::wstring& from, const std::wstring& to);
     void OpenLink(const std::wstring& href);
     void UpdateStatusFont();
     COLORREF StatusColor(bool background) const;
     std::wstring GetCurrentBufferPath() const;
+    std::wstring GetCurrentDocumentFolder() const;
+    void ApplyReaderLanguage();
     bool IsCurrentBufferMarkdown() const;
 
     static LRESULT CALLBACK PanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -92,8 +104,9 @@ private:
 
     PluginConfig m_config;
     std::wstring m_configPath;
-    std::wstring m_tableWidthsPath;
-    std::unordered_map<std::wstring, std::wstring> m_tableWidthsCache; // key -> value; keeps the session's widths if the file write fails
+    std::wstring m_pendingAnchorPath, m_pendingAnchor; // a section link's target, scrolled to after its first render
+    std::wstring m_documentStatePath; // NppMarkdownNext.documents.ini: per-document reader state
+    std::unordered_map<std::wstring, std::wstring> m_documentStateCache; // "section/key" -> value; survives a failed write
     WebView2Viewer m_webViewViewer;
     MarkdownDocument m_currentDoc;
 
@@ -101,6 +114,8 @@ private:
     bool m_isPanelRegistered = false;
     bool m_isPanelVisible = false;
     bool m_userClosedPanel = false;
+    bool m_documentStateWarningReported = false; // a failing documents.ini is reported once per session
+    bool m_nativeLanguageRussian = false; // Notepad++ itself is shown in Russian
     bool m_restorePanelOnStartup = false; // the panel was open when Notepad++ closed (used when auto-show is off)
     HFONT m_statusFont = nullptr;
     UINT m_statusFontDpi = 0;
@@ -120,6 +135,7 @@ private:
     bool m_exportQueued = false;
     std::wstring m_queuedExportOperation;
     std::wstring m_queuedExportRequestId;
+    ExportContent m_queuedExportContent;
     std::vector<std::wstring> m_pendingExportWarnings;
     UINT_PTR m_activeBufferId = 0;
     std::wstring m_activeBufferPath;

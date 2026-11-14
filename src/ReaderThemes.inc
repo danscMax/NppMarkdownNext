@@ -48,14 +48,14 @@ body[class] .doc :is(h1, h2, h3, h4, h5, h6) { color: var(--ink); }
 }
 
 body.toc-open #theme-fab {
-    right: 290px;
+    right: calc(var(--toc-width, 280px) + 10px);
 }
 
 #theme-popover {
     position: fixed;
     right: 16px;
     bottom: 58px;
-    width: 200px;
+    width: 260px; /* room for the longer Russian labels on one line */
     max-width: calc(100vw - 32px);
     max-height: 65vh;
     overflow-y: auto;
@@ -71,7 +71,7 @@ body.toc-open #theme-fab {
 }
 
 body.toc-open #theme-popover {
-    right: 290px;
+    right: calc(var(--toc-width, 280px) + 10px);
 }
 
 .theme-pop-title {
@@ -170,7 +170,7 @@ body.toc-open #theme-popover {
 }
 
 #toc-drawer {
-    width: 280px;
+    width: var(--toc-width, 280px); /* the user drags its edge; kept in the settings */
     max-width: calc(100vw - 32px);
     background: var(--drawer-bg);
     border-left: 1px solid var(--border-color);
@@ -288,7 +288,7 @@ body { transition: background-color 0.25s ease, color 0.25s ease; }
 #theme-fab:focus-visible, .theme-pop-item:focus-visible, .toc-close:focus-visible, .toc-item:focus-visible { outline: 2px solid var(--link-color); outline-offset: 2px; }
 #toc-drawer { display: flex !important; position: fixed; top: 0; right: 0; transform: translateX(100%); }
 body.toc-open #toc-drawer { transform: translateX(0); }
-body.toc-open #reader-wrap { padding-right: 300px; }
+body.toc-open #reader-wrap { padding-right: calc(var(--toc-width, 280px) + 20px); }
 @media (max-width: 650px) {
     body.toc-open #reader-wrap { padding-right: 20px; }
     body.toc-open #theme-fab, body.toc-open #theme-popover { right: 16px; }
@@ -327,7 +327,7 @@ body.toc-open #reader-wrap { padding-right: 300px; }
 
 )THEME_CSS";
 inline constexpr const char* s_readerSettingsHtml = R"SETTINGS_HTML(
-<button id="theme-fab" title="Settings" aria-label="Settings" aria-expanded="false" aria-controls="theme-popover" onclick="toggleThemePopover(event)">
+<button id="theme-fab" title="Settings" aria-label="Settings" data-i18n-title="ui.settingsButton" data-i18n-aria="ui.settingsButton" aria-expanded="false" aria-controls="theme-popover" onclick="toggleThemePopover(event)">
   <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
 </button>
 <div id="theme-popover" style="display: none;">
@@ -339,8 +339,8 @@ inline constexpr const char* s_readerSettingsHtml = R"SETTINGS_HTML(
 <div id="toast-msg" class="toast-notification" role="status"></div>
 <div id="reader-warnings"><div id="reader-settings-warning" role="alert" hidden></div><div id="reader-operation-warning" role="alert" hidden></div><div id="reader-script-warning" role="alert" hidden></div></div>
 <div id="toc-backdrop" onclick="closeToc()"></div>
-<aside id="toc-drawer" aria-label="Outline / Table of Contents" inert>
-  <div class="toc-header"><span class="toc-title">Outline / Table of Contents</span><button class="toc-close" aria-label="Close outline" onclick="closeToc()">&#215;</button></div>
+<aside id="toc-drawer" aria-label="Outline / Table of Contents" data-i18n-aria="ui.outlineTitle" inert>
+  <div class="toc-header"><span class="toc-title" data-i18n="ui.outlineTitle">Outline / Table of Contents</span><button class="toc-close" aria-label="Close outline" data-i18n-aria="ui.closeOutline" onclick="closeToc()">&#215;</button></div>
   <div class="toc-content"></div>
 </aside>
 
@@ -348,6 +348,21 @@ inline constexpr const char* s_readerSettingsHtml = R"SETTINGS_HTML(
 inline constexpr const char* s_readerThemeScript = R"THEME_JS(
 window._syncEnabled = true; window._bidiEnabled = true; window._autoShowPanel = true;
 window._zoomPercent = 100; window._darkMode = -1; var nativeDark = false;
+window._language = 'en'; window._languageSetting = 'auto';
+// The plugin's own text (themes/reader-strings.json) in the language the host chose; English is the fallback.
+function rt(key, arg) {
+    var strings = window.READER_STRINGS || {};
+    var text = (strings[window._language] || {})[key] || (strings.en || {})[key] || key;
+    return arg === undefined ? text : text.replace('{0}', function() { return String(arg); });
+}
+// Fixed markup names its text by key: data-i18n (text), data-i18n-title, data-i18n-aria, data-i18n-placeholder.
+function localizeStatic() {
+    document.querySelectorAll('[data-i18n]').forEach(function(el) { el.textContent = rt(el.dataset.i18n); });
+    document.querySelectorAll('[data-i18n-title]').forEach(function(el) { el.title = rt(el.dataset.i18nTitle); });
+    document.querySelectorAll('[data-i18n-aria]').forEach(function(el) { el.setAttribute('aria-label', rt(el.dataset.i18nAria)); });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(function(el) { el.placeholder = rt(el.dataset.i18nPlaceholder); });
+}
+var LANGUAGE_NAMES = {en: 'English', ru: 'Русский'}; // each in its own language, as language pickers show them
 window._fontSizePx = 15; window._lineHeightPercent = 170; window._maxWidthPx = 860;
 var pendingExport = null, exportCounter = 0;
 var exportPrefix = Date.now().toString(36) + ':' + Math.random().toString(36).slice(2, 8);
@@ -550,21 +565,40 @@ function themePopItem(id, label, checked, onclick) {
 }
 
 function themeItemLabelById(id) {
-    if (id.indexOf('bearded-v-') === 0) return 'Bearded: ' + beardedVariantLabel(id);
+    if (id.indexOf('bearded-v-') === 0) return rt('set.beardedLabel', beardedVariantLabel(id));
     for (var i = 0; i < THEME_LIST.length; i++) {
-        if (THEME_LIST[i].id === id) return THEME_LIST[i].label;
+        if (THEME_LIST[i].id === id) return themeLabel(THEME_LIST[i]);
     }
-    return id === 'follow' ? 'Follow Notepad++' : id;
+    return id === 'follow' ? rt('theme.follow') : id;
+}
+// The built-in themes have translated names; named themes (GitHub, Nord...) keep their own.
+function themeLabel(theme) {
+    return ['follow', 'light', 'dark'].includes(theme.id) ? rt('theme.' + theme.id) : theme.label;
 }
 
 function zoomPercentLabel() {
     return (window._zoomPercent || 100) + '%';
 }
 
+// Reading presets come from themes/reader-settings.json (READER_SETTINGS), the same lists the host validates.
+function readingPresets(kind) {
+    var key = {fontSize: 'fontSizePx', lineHeight: 'lineHeightPercent', readingWidth: 'maxWidthPx'}[kind];
+    return window.READER_SETTINGS.presets[key] || [];
+}
+function presetLabel(kind, value) {
+    if (kind === 'lineHeight') return value + '%';
+    if (kind === 'readingWidth' && value === 0) return rt('set.wholePane');
+    return value + 'px';
+}
+
 function darkModeLabel() {
-    if (window._darkMode === 0) return 'Light';
-    if (window._darkMode === 1) return 'Dark';
-    return 'Auto';
+    if (window._darkMode === 0) return rt('set.light');
+    if (window._darkMode === 1) return rt('set.dark');
+    return rt('set.auto');
+}
+
+function languageLabel() {
+    return LANGUAGE_NAMES[window._languageSetting] || rt('set.languageAuto');
 }
 
 function refreshThemePopover() {
@@ -575,72 +609,79 @@ function refreshThemePopover() {
     var html = '';
 
     if (_themePopView === 'settings') {
-        if (title) title.textContent = 'Settings';
-        html += themePopRow('Theme: ' + themeItemLabelById(current), "openThemeView('themes')", false, true);
-        html += themePopRow('Sync with caret', 'toggleSyncFromMenu(); refreshThemePopover();', !!window._syncEnabled, false);
-        html += themePopRow('Outline / TOC', 'toggleTocFromMenu(); refreshThemePopover();', document.body.classList.contains('toc-open'), false);
-        html += themePopRow('Smart BiDi', 'toggleBiDiFromMenu(); refreshThemePopover();', !!window._bidiEnabled, false);
-        html += themePopRow('Auto-show for Markdown', 'toggleAutoShowFromMenu(); refreshThemePopover();', !!window._autoShowPanel, false);
-        html += themePopRow('Zoom: ' + zoomPercentLabel(), "openThemeView('zoom')", false, true);
-        html += themePopRow('Typography', "openThemeView('typography')", false, true);
-        html += themePopRow('Copy HTML', 'copyHtmlFromMenu(); closeThemePopover();', false, false, null, !!pendingExport);
-        html += themePopRow('Save HTML...', 'closeThemePopover(); saveAsHtmlFromMenu();', false, false, null, !!pendingExport);
-        html += themePopRow('Dark mode: ' + darkModeLabel() + (current === 'follow' ? '' : ' (Follow Notepad++ only)'), "openThemeView('darkmode')", false, true, null, current !== 'follow');
-        html += themePopRow('About NppMarkdownNext', "openThemeView('about')", false, false);
+        if (title) title.textContent = rt('set.title');
+        html += themePopRow(rt('set.theme', themeItemLabelById(current)), "openThemeView('themes')", false, true);
+        html += themePopRow(rt('set.sync'), 'toggleSyncFromMenu(); refreshThemePopover();', !!window._syncEnabled, false);
+        html += themePopRow(rt('set.outline'), 'toggleTocFromMenu(); refreshThemePopover();', document.body.classList.contains('toc-open'), false);
+        html += themePopRow(rt('set.bidi'), 'toggleBiDiFromMenu(); refreshThemePopover();', !!window._bidiEnabled, false);
+        html += themePopRow(rt('set.autoShow'), 'toggleAutoShowFromMenu(); refreshThemePopover();', !!window._autoShowPanel, false);
+        html += themePopRow(rt('set.zoom', zoomPercentLabel()), "openThemeView('zoom')", false, true);
+        html += themePopRow(rt('set.typography'), "openThemeView('typography')", false, true);
+        html += themePopRow(rt('set.copyHtml'), 'copyHtmlFromMenu(); closeThemePopover();', false, false, null, !!pendingExport);
+        html += themePopRow(rt('set.saveHtml'), 'closeThemePopover(); saveAsHtmlFromMenu();', false, false, null, !!pendingExport);
+        html += themePopRow(rt(current === 'follow' ? 'set.darkMode' : 'set.darkModeFollowOnly', darkModeLabel()), "openThemeView('darkmode')", false, true, null, current !== 'follow');
+        html += themePopRow(rt('set.language', languageLabel()), "openThemeView('language')", false, true);
+        html += themePopRow(rt('set.about'), "openThemeView('about')", false, false);
     } else if (_themePopView === 'typography') {
-        if (title) title.textContent = 'Typography';
+        if (title) title.textContent = rt('set.typography');
         html += themePopRow('< Back', 'backToThemeList()', false, false, '__back');
-        html += themePopRow('Text size: ' + window._fontSizePx + 'px', "openThemeView('fontSize')", false, true);
-        html += themePopRow('Line height: ' + window._lineHeightPercent + '%', "openThemeView('lineHeight')", false, true);
-        html += themePopRow('Reading width: ' + window._maxWidthPx + 'px', "openThemeView('readingWidth')", false, true);
+        html += themePopRow(rt('set.textSize', window._fontSizePx + 'px'), "openThemeView('fontSize')", false, true);
+        html += themePopRow(rt('set.lineHeight', window._lineHeightPercent + '%'), "openThemeView('lineHeight')", false, true);
+        html += themePopRow(rt('set.readingWidth', presetLabel('readingWidth', window._maxWidthPx)), "openThemeView('readingWidth')", false, true);
     } else if (['fontSize', 'lineHeight', 'readingWidth'].includes(_themePopView)) {
-        var presets = _themePopView === 'fontSize' ? [15, 17, 19] : (_themePopView === 'lineHeight' ? [150, 170, 190] : [680, 860, 1100]);
+        var presets = readingPresets(_themePopView);
         var field = _themePopView === 'fontSize' ? '_fontSizePx' : (_themePopView === 'lineHeight' ? '_lineHeightPercent' : '_maxWidthPx');
-        if (title) title.textContent = _themePopView === 'fontSize' ? 'Text size' : (_themePopView === 'lineHeight' ? 'Line height' : 'Reading width');
+        if (title) title.textContent = rt(_themePopView === 'fontSize' ? 'set.textSizeTitle' : (_themePopView === 'lineHeight' ? 'set.lineHeightTitle' : 'set.readingWidthTitle'));
         html += themePopRow('< Back', "openThemeView('typography')", false, false, '__back');
-        presets.forEach(function(value) { html += themePopRow(value + (_themePopView === 'lineHeight' ? '%' : 'px'), "setTypographyFromMenu('" + _themePopView + "'," + value + ')', window[field] === value, false); });
+        presets.forEach(function(value) { html += themePopRow(presetLabel(_themePopView, value), "setTypographyFromMenu('" + _themePopView + "'," + value + ')', window[field] === value, false); });
     } else if (_themePopView === 'zoom') {
-        if (title) title.textContent = 'Zoom (' + zoomPercentLabel() + ')';
+        if (title) title.textContent = rt('set.zoomTitle', zoomPercentLabel());
         html += themePopRow('< Back', 'backToThemeList()', false, false, '__back');
-        html += themePopRow('Zoom in', 'zoomInFromMenu(); refreshThemePopover();', false, false);
-        html += themePopRow('Zoom out', 'zoomOutFromMenu(); refreshThemePopover();', false, false);
-        html += themePopRow('Reset (100%)', 'zoomResetFromMenu(); refreshThemePopover();', false, false);
+        html += themePopRow(rt('set.zoomIn'), 'zoomInFromMenu(); refreshThemePopover();', false, false);
+        html += themePopRow(rt('set.zoomOut'), 'zoomOutFromMenu(); refreshThemePopover();', false, false);
+        html += themePopRow(rt('set.zoomReset'), 'zoomResetFromMenu(); refreshThemePopover();', false, false);
         html += themePopRow('80%', "setZoomPercentFromMenu(80); setTimeout(refreshThemePopover, 80);", window._zoomPercent === 80, false);
         html += themePopRow('100%', "setZoomPercentFromMenu(100); setTimeout(refreshThemePopover, 80);", window._zoomPercent === 100, false);
         html += themePopRow('125%', "setZoomPercentFromMenu(125); setTimeout(refreshThemePopover, 80);", window._zoomPercent === 125, false);
         html += themePopRow('150%', "setZoomPercentFromMenu(150); setTimeout(refreshThemePopover, 80);", window._zoomPercent === 150, false);
     } else if (_themePopView === 'darkmode') {
-        if (title) title.textContent = 'Dark mode';
+        if (title) title.textContent = rt('set.darkModeTitle');
         html += themePopRow('< Back', 'backToThemeList()', false, false, '__back');
-        html += themePopRow('Auto (follow Notepad++)', 'setDarkModeFromMenu(-1);', window._darkMode === undefined || window._darkMode === -1, false);
-        html += themePopRow('Light', 'setDarkModeFromMenu(0);', window._darkMode === 0, false);
-        html += themePopRow('Dark', 'setDarkModeFromMenu(1);', window._darkMode === 1, false);
+        html += themePopRow(rt('set.darkAuto'), 'setDarkModeFromMenu(-1);', window._darkMode === undefined || window._darkMode === -1, false);
+        html += themePopRow(rt('set.light'), 'setDarkModeFromMenu(0);', window._darkMode === 0, false);
+        html += themePopRow(rt('set.dark'), 'setDarkModeFromMenu(1);', window._darkMode === 1, false);
+    } else if (_themePopView === 'language') {
+        if (title) title.textContent = rt('set.languageTitle');
+        html += themePopRow(rt('set.back'), 'backToThemeList()', false, false, '__back');
+        ['auto', 'en', 'ru'].forEach(function(language) {
+            html += themePopRow(LANGUAGE_NAMES[language] || rt('set.languageAuto'), "setLanguageFromMenu('" + language + "')", window._languageSetting === language, false);
+        });
     } else if (_themePopView === 'about') {
-        if (title) title.textContent = 'About';
+        if (title) title.textContent = rt('set.aboutTitle');
         html += themePopRow('< Back', 'backToThemeList()', false, false, '__back');
-        html += themePopRow('NppMarkdownNext v1.6.0', '', false, false);
-        html += themePopRow('Open project page', "location.href='https://github.com/theneet0/NppMarkdownNext';", false, false);
+        html += themePopRow('NppMarkdownNext v' + window.READER_SETTINGS.version, '', false, false);
+        html += themePopRow(rt('set.openProject'), "location.href='https://github.com/theneet0/NppMarkdownNext';", false, false);
     } else if (_themePopView === 'bearded') {
-        if (title) title.textContent = 'Bearded themes';
+        if (title) title.textContent = rt('set.beardedTitle');
         html += themePopRow('< Back', 'backToThemeList()', false, false, '__back');
-        html += themePopItem('bearded', 'Classic (Arc)', current === 'bearded', "selectThemeFromMenu('bearded')");
+        html += themePopItem('bearded', rt('set.beardedClassic'), current === 'bearded', "selectThemeFromMenu('bearded')");
         var variants = window.BEARDED_VARIANTS || [];
         for (var v = 0; v < variants.length; v++) {
             html += themePopItem(variants[v].id, variants[v].label, current === variants[v].id,
                                  "selectThemeFromMenu('" + variants[v].id + "')");
         }
     } else {
-        if (title) title.textContent = 'Theme';
+        if (title) title.textContent = rt('set.themes');
         html += themePopRow('< Back', 'backToThemeList()', false, false, '__back');
         for (var i = 0; i < THEME_LIST.length; i++) {
             var t = THEME_LIST[i];
             if (t.id === 'bearded') {
                 var isVariant = current.indexOf('bearded-v-') === 0;
-                var label = isVariant ? ('Bearded: ' + beardedVariantLabel(current)) : t.label;
+                var label = isVariant ? rt('set.beardedLabel', beardedVariantLabel(current)) : themeLabel(t);
                 var checked = (current === 'bearded' || isVariant);
                 html += themePopItem('bearded', label, checked, 'openBeardedThemeList()');
             } else {
-                html += themePopItem(t.id, t.label, t.id === current, "selectThemeFromMenu('" + t.id + "')");
+                html += themePopItem(t.id, themeLabel(t), t.id === current, "selectThemeFromMenu('" + t.id + "')");
             }
         }
     }
@@ -741,14 +782,16 @@ function beginHtmlOperation(operation) {
     // Generous, because Save HTML waits for the user in the file dialog.
     var request = pendingExport;
     request.timer = setTimeout(function() { if (pendingExport === request) { pendingExport = null; refreshThemePopover(); } }, 10 * 60 * 1000);
-    window.chrome.webview.postMessage(operation + ':' + pendingExport.requestId);
+    // With a rendered document, the export is what the reader shows (exportPayload); otherwise the host's parser.
+    var rendered = window.readerDocumentIndex && window.readerDocumentIndex.state === 'ready' && typeof exportPayload === 'function';
+    window.chrome.webview.postMessage(operation + ':' + pendingExport.requestId + (rendered ? exportPayload() : ''));
     refreshThemePopover();
     return true;
 }
 
 function showOperationResult(data) {
     if (data.operation === 'saveSettings') {
-        setReaderWarning('reader-settings-warning', data.status === 'succeeded' ? '' : ('Settings could not be saved. ' + (data.detail || 'Change a setting to retry.')));
+        setReaderWarning('reader-settings-warning', data.status === 'succeeded' ? '' : rt('warn.settings', data.detail || rt('warn.settingsRetry')));
         return;
     }
     if (pendingExport) {
@@ -758,8 +801,8 @@ function showOperationResult(data) {
     } else if (data.requestId) return;
     refreshThemePopover();
     var failed = data.status !== 'succeeded' && data.status !== 'cancelled';
-    setReaderWarning('reader-operation-warning', failed ? ((data.status === 'partial' ? 'Only part of the clipboard data was copied. ' : 'Operation failed. ') + (data.detail || '') + (data.recoveryPath ? ' Recovery file: ' + data.recoveryPath : '')) : '');
-    if (data.status === 'succeeded') showToast(data.operation === 'copyHtml' ? 'Rendered HTML copied' : 'HTML saved', 5000);
+    setReaderWarning('reader-operation-warning', failed ? (rt(data.status === 'partial' ? 'warn.partial' : 'warn.failed', data.detail || '') + (data.recoveryPath ? rt('warn.recovery', data.recoveryPath) : '')) : '');
+    if (data.status === 'succeeded') showToast(rt(data.operation === 'copyHtml' ? 'toast.htmlCopied' : 'toast.htmlSaved'), 5000);
 }
 
 function saveAsHtmlFromMenu() {
@@ -774,7 +817,7 @@ function saveAsHtmlFromMenu() {
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        showToast("💾 HTML exported");
+        showToast('💾 ' + rt('toast.htmlSaved'));
     }
 }
 
@@ -782,8 +825,13 @@ function copyHtmlFromMenu() {
     if (window.chrome && window.chrome.webview) {
         beginHtmlOperation('copyHtml');
     } else {
-        showToast('⚠ Copy is available in the preview panel');
+        showToast('⚠ ' + rt('toast.panelOnly'));
     }
+}
+
+function setLanguageFromMenu(language) {
+    openThemeView('settings');
+    if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage('readerLanguage:' + language);
 }
 
 function setDarkModeFromMenu(mode) {
@@ -796,7 +844,7 @@ function setDarkModeFromMenu(mode) {
 }
 
 function setTypographyFromMenu(kind, value) {
-    var options = {fontSize: {values: [15, 17, 19], command: 'readingFontSize:', field: '_fontSizePx'}, lineHeight: {values: [150, 170, 190], command: 'readingLineHeight:', field: '_lineHeightPercent'}, readingWidth: {values: [680, 860, 1100], command: 'readingWidth:', field: '_maxWidthPx'}};
+    var options = {fontSize: {values: readingPresets('fontSize'), command: 'readingFontSize:', field: '_fontSizePx'}, lineHeight: {values: readingPresets('lineHeight'), command: 'readingLineHeight:', field: '_lineHeightPercent'}, readingWidth: {values: readingPresets('readingWidth'), command: 'readingWidth:', field: '_maxWidthPx'}};
     var option = options[kind];
     if (!option || !option.values.includes(value)) return;
     if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage(option.command + value);
@@ -808,7 +856,7 @@ function applyContentTypography() {
     if (!content) return;
     content.style.setProperty('--reader-font-size', window._fontSizePx + 'px');
     content.style.setProperty('--reader-line-height', window._lineHeightPercent / 100);
-    content.style.setProperty('--reader-max-width', window._maxWidthPx + 'px');
+    content.style.setProperty('--reader-max-width', window._maxWidthPx ? window._maxWidthPx + 'px' : '100cqw'); // 0 = the whole pane
     scheduleCurrentSection();
 }
 
@@ -852,6 +900,7 @@ function toggleTocFromMenu() {
 function onTocClick(id) {
     var el = document.getElementById(id);
     if (el) {
+        if (typeof rememberReadingPlace === 'function') rememberReadingPlace(); // "Back" returns here
         el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
     if (window.innerWidth <= 650) {
@@ -899,7 +948,7 @@ function updateReaderOutline(index) {
         retained.add(heading.id);
     });
     oldLinks.forEach(function(link, id) { if (!retained.has(id)) link.remove(); });
-    if (!index.headings.length) toc.textContent = 'No headings in this document';
+    if (!index.headings.length) toc.textContent = rt('ui.noHeadings');
     if (focusedIndex >= 0 && !focused.isConnected) {
         var links = toc.querySelectorAll('.toc-item');
         (links[Math.min(focusedIndex, links.length - 1)] || document.querySelector('.toc-close')).focus();
@@ -919,9 +968,13 @@ function applyReaderSettings(data) {
     window._darkMode = data.darkMode;
     window._zoomPercent = data.zoomPercent;
     window._autoShowPanel = !!data.autoShow;
-    if ([15, 17, 19].includes(data.fontSizePx)) window._fontSizePx = data.fontSizePx;
-    if ([150, 170, 190].includes(data.lineHeightPercent)) window._lineHeightPercent = data.lineHeightPercent;
-    if ([680, 860, 1100].includes(data.maxWidthPx)) window._maxWidthPx = data.maxWidthPx;
+    if (LANGUAGE_NAMES[data.language]) window._language = data.language;
+    window._languageSetting = LANGUAGE_NAMES[data.languageSetting] ? data.languageSetting : 'auto';
+    document.documentElement.dataset.uiLanguage = document.documentElement.lang = window._language;
+    localizeStatic();
+    if (readingPresets('fontSize').includes(data.fontSizePx)) window._fontSizePx = data.fontSizePx;
+    if (readingPresets('lineHeight').includes(data.lineHeightPercent)) window._lineHeightPercent = data.lineHeightPercent;
+    if (readingPresets('readingWidth').includes(data.maxWidthPx)) window._maxWidthPx = data.maxWidthPx;
     applyContentTypography();
     document.body.classList.toggle('toc-open', !!data.outline);
     var drawer = document.getElementById('toc-drawer');
@@ -941,12 +994,14 @@ if (window.chrome && window.chrome.webview) {
             nativeDark = !!data.isDark;
             window._themeId = data.themeId || window._themeId || 'follow';
             applyThemeClass(window._themeId);
+            var content = document.getElementById('content');
+            if (data.type === 'render' && content) content.lang = data.lang || '';
             refreshThemePopover();
         } else if (data.type === 'settings') {
             applyReaderSettings(data);
         } else if (data.type === 'operationResult') {
             showOperationResult(data);
-        } else if (data.type === 'tableWidths') {
+        } else if (data.type === 'documentState' && data.kind === 'tableWidths') {
             receiveTableWidths(String(data.bufferId || ''), String(data.value || ''));
         }
     });

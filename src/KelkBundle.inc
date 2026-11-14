@@ -3386,6 +3386,9 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
     }
   });
 
+  // The reader's translated text (rt in ReaderThemes.inc); a page without the reader keeps English.
+  function readerText(key, fallback) { return typeof window.rt === 'function' ? window.rt(key) : fallback; }
+
   // Configure marked for GFM
   if (typeof marked !== 'undefined') {
     marked.setOptions({
@@ -3426,10 +3429,36 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
     }]});
   }
 
+  // Privacy: nothing in a document may fetch from the network on its own. The sanitizer parses in an inert
+  // document, so moving remote sources aside here happens before any request; the reader offers a
+  // "load" button per image (data-remote-src). Media and inline-style URLs are dropped outright.
+  var REMOTE_URL = /^\s*(?:[a-z][a-z0-9+.-]*:)?\/\//i;
+  if (typeof DOMPurify !== 'undefined' && DOMPurify.addHook) {
+    // "C:\x.png" looks like an unknown URL scheme to the sanitizer, which drops it: keep the written path as plain
+    // text so the reader can say why the picture is not shown.
+    DOMPurify.addHook('uponSanitizeAttribute', function(node, data) {
+      if (node.nodeName === 'IMG' && data.attrName === 'src' && /^[a-z]:(?:[\\/]|%5c)/i.test(data.attrValue || '')) node.setAttribute('data-local-path', data.attrValue);
+    });
+    DOMPurify.addHook('afterSanitizeAttributes', function(node) {
+      if (node.nodeName === 'IMG' && REMOTE_URL.test(node.getAttribute('src') || '')) {
+        node.setAttribute('data-remote-src', node.getAttribute('src'));
+        node.removeAttribute('src');
+      }
+      if (node.hasAttribute('srcset')) node.removeAttribute('srcset');
+      ['poster', 'background'].forEach(function(name) { if (node.hasAttribute(name)) node.removeAttribute(name); });
+      if (/^(?:VIDEO|AUDIO|SOURCE|TRACK|INPUT)$/.test(node.nodeName) && REMOTE_URL.test(node.getAttribute('src') || '')) node.removeAttribute('src');
+      if (node.namespaceURI === '\u0068\u0074\u0074\u0070://www.w3.org/2000/svg' && node.nodeName.toLowerCase() !== 'a') {
+        ['href', 'xlink:href'].forEach(function(name) { if (REMOTE_URL.test(node.getAttribute(name) || '')) node.removeAttribute(name); });
+      }
+      // url(), image-set() and CSS escapes (which can spell either) never reach the page
+      if (/url\s*\(|image-set|\\/i.test(node.getAttribute('style') || '')) node.removeAttribute('style');
+    });
+  }
+
   function renderFootnotes() {
     var items = footnotes.order.filter(function(id) { return id in footnotes.notes; }).map(function(id) {
       var safe = escapeHtml(id);
-      return '<li id="fn-' + safe + '">' + footnotes.notes[id] + ' <a href="#fnref-' + safe + '" class="footnote-back" aria-label="Back to the text">↩</a></li>';
+      return '<li id="fn-' + safe + '">' + footnotes.notes[id] + ' <a href="#fnref-' + safe + '" class="footnote-back" aria-label="' + readerText('ui.backToText', 'Back to the text') + '">↩</a></li>';
     });
     return items.length ? '<section class="footnotes" data-source-unmapped="true"><hr><ol>' + items.join('') + '</ol></section>\n' : '';
   }
@@ -3552,9 +3581,23 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
     var preceding = currentDocument.index.headings.filter(function(heading) { return heading.line !== null && heading.line <= anchor.line; });
     readingPositions.delete(currentDocument.bufferId);
     var heading = preceding.length ? preceding[preceding.length - 1] : null;
-    readingPositions.set(currentDocument.bufferId, {line: anchor.line, heading: heading ? heading.id : '', relativeLine: heading ? anchor.line - heading.line : 0, offset: anchor.element.getBoundingClientRect().top});
+    var position = {line: anchor.line, heading: heading ? heading.id : '', relativeLine: heading ? anchor.line - heading.line : 0, offset: Math.round(anchor.element.getBoundingClientRect().top)};
+    readingPositions.set(currentDocument.bufferId, position);
     while (readingPositions.size > 100) readingPositions.delete(readingPositions.keys().next().value);
+    // The host keeps it per file ("line:offset"), so the place survives closing the tab and restarting.
+    var wire = position.line + ':' + Math.max(-99999, Math.min(99999, position.offset));
+    if (/^\d+$/.test(currentDocument.bufferId) && sentReadingPositions.get(currentDocument.bufferId) !== wire && window.chrome && window.chrome.webview) {
+      sentReadingPositions.set(currentDocument.bufferId, wire);
+      window.chrome.webview.postMessage('readingPosition:' + currentDocument.bufferId + ':' + wire);
+    }
   }
+  var sentReadingPositions = new Map();
+  // Scrolling alone (no edit, no tab switch) also moves the place: capture once the reader stops scrolling.
+  var readingScrollTimer = 0;
+  document.addEventListener('scroll', function() {
+    clearTimeout(readingScrollTimer);
+    readingScrollTimer = setTimeout(captureReadingPosition, 600);
+  }, {passive: true, capture: true});
 
   function finalizeDocument(data, state, sequence) {
     var index = state === 'ready' ? buildDocumentIndex(contentEl) : {headings: [], blocks: []};
@@ -3717,14 +3760,14 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
 
       var mdText = data.markdown || '';
       if (!mdText.trim()) {
-        contentEl.innerHTML = '<div style="color:var(--muted);text-align:center;padding:60px 20px;"><em>(No content to preview)</em></div>';
+        contentEl.innerHTML = '<div style="color:var(--muted);text-align:center;padding:60px 20px;"><em>' + readerText('ui.noContent', '(No content to preview)') + '</em></div>';
         finalizeDocument(data, 'empty', sequence);
         return;
       }
 
       var html = parseWithLines(mdText);
       if (typeof DOMPurify !== 'undefined' && typeof DOMPurify.sanitize === 'function') {
-        html = DOMPurify.sanitize(html, { ADD_ATTR: ['data-line', 'data-source-unmapped', 'data-task-key', 'target', 'dir', 'align'] });
+        html = DOMPurify.sanitize(html, { FORBID_TAGS: ['style'], ADD_ATTR: ['data-line', 'data-source-unmapped', 'data-task-key', 'data-remote-src', 'data-local-path', 'target', 'dir', 'align'] });
       }
 
       contentEl.innerHTML = html;
@@ -3808,7 +3851,7 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
       }
       if (contentEl) {
         contentEl.innerHTML = '<div style="color:var(--danger);padding:24px;border:1px solid var(--danger);border-radius:8px;background:var(--code-bg);">' +
-                              '<h3 style="margin-top:0;">Preview Error</h3>' +
+                              '<h3 style="margin-top:0;">' + readerText('ui.previewError', 'Preview Error') + '</h3>' +
                               '<p>' + escapeHtml(err ? err.message : 'Error') + '</p>' +
                               '</div>';
         finalizeDocument(data, 'error', sequence);
@@ -3872,6 +3915,14 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
 
       if (data.type === 'render') {
         applyRender(data);
+      } else if (data.type === 'documentState' && data.kind === 'readingPosition') {
+        // the place saved for this file: used only when the reader has none fresher for the buffer
+        var saved = /^(\d{1,7}):(-?\d{1,6})$/.exec(String(data.value || ''));
+        var buffer = String(data.bufferId || '');
+        if (saved && !readingPositions.has(buffer)) {
+          readingPositions.set(buffer, {line: Number(saved[1]), heading: '', relativeLine: 0, offset: Number(saved[2])});
+          sentReadingPositions.set(buffer, data.value);
+        }
       } else if (data.type === 'bufferClosed') {
         readingPositions.delete(data.bufferId);
         if (currentDocument && currentDocument.bufferId === data.bufferId) currentDocument.closed = true;
@@ -7304,6 +7355,9 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
     }
   });
 
+  // The reader's translated text (rt in ReaderThemes.inc); a page without the reader keeps English.
+  function readerText(key, fallback) { return typeof window.rt === 'function' ? window.rt(key) : fallback; }
+
   // Configure marked for GFM
   if (typeof marked !== 'undefined') {
     marked.setOptions({
@@ -7344,10 +7398,36 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
     }]});
   }
 
+  // Privacy: nothing in a document may fetch from the network on its own. The sanitizer parses in an inert
+  // document, so moving remote sources aside here happens before any request; the reader offers a
+  // "load" button per image (data-remote-src). Media and inline-style URLs are dropped outright.
+  var REMOTE_URL = /^\s*(?:[a-z][a-z0-9+.-]*:)?\/\//i;
+  if (typeof DOMPurify !== 'undefined' && DOMPurify.addHook) {
+    // "C:\x.png" looks like an unknown URL scheme to the sanitizer, which drops it: keep the written path as plain
+    // text so the reader can say why the picture is not shown.
+    DOMPurify.addHook('uponSanitizeAttribute', function(node, data) {
+      if (node.nodeName === 'IMG' && data.attrName === 'src' && /^[a-z]:(?:[\\/]|%5c)/i.test(data.attrValue || '')) node.setAttribute('data-local-path', data.attrValue);
+    });
+    DOMPurify.addHook('afterSanitizeAttributes', function(node) {
+      if (node.nodeName === 'IMG' && REMOTE_URL.test(node.getAttribute('src') || '')) {
+        node.setAttribute('data-remote-src', node.getAttribute('src'));
+        node.removeAttribute('src');
+      }
+      if (node.hasAttribute('srcset')) node.removeAttribute('srcset');
+      ['poster', 'background'].forEach(function(name) { if (node.hasAttribute(name)) node.removeAttribute(name); });
+      if (/^(?:VIDEO|AUDIO|SOURCE|TRACK|INPUT)$/.test(node.nodeName) && REMOTE_URL.test(node.getAttribute('src') || '')) node.removeAttribute('src');
+      if (node.namespaceURI === '\u0068\u0074\u0074\u0070://www.w3.org/2000/svg' && node.nodeName.toLowerCase() !== 'a') {
+        ['href', 'xlink:href'].forEach(function(name) { if (REMOTE_URL.test(node.getAttribute(name) || '')) node.removeAttribute(name); });
+      }
+      // url(), image-set() and CSS escapes (which can spell either) never reach the page
+      if (/url\s*\(|image-set|\\/i.test(node.getAttribute('style') || '')) node.removeAttribute('style');
+    });
+  }
+
   function renderFootnotes() {
     var items = footnotes.order.filter(function(id) { return id in footnotes.notes; }).map(function(id) {
       var safe = escapeHtml(id);
-      return '<li id="fn-' + safe + '">' + footnotes.notes[id] + ' <a href="#fnref-' + safe + '" class="footnote-back" aria-label="Back to the text">↩</a></li>';
+      return '<li id="fn-' + safe + '">' + footnotes.notes[id] + ' <a href="#fnref-' + safe + '" class="footnote-back" aria-label="' + readerText('ui.backToText', 'Back to the text') + '">↩</a></li>';
     });
     return items.length ? '<section class="footnotes" data-source-unmapped="true"><hr><ol>' + items.join('') + '</ol></section>\n' : '';
   }
@@ -7470,9 +7550,23 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
     var preceding = currentDocument.index.headings.filter(function(heading) { return heading.line !== null && heading.line <= anchor.line; });
     readingPositions.delete(currentDocument.bufferId);
     var heading = preceding.length ? preceding[preceding.length - 1] : null;
-    readingPositions.set(currentDocument.bufferId, {line: anchor.line, heading: heading ? heading.id : '', relativeLine: heading ? anchor.line - heading.line : 0, offset: anchor.element.getBoundingClientRect().top});
+    var position = {line: anchor.line, heading: heading ? heading.id : '', relativeLine: heading ? anchor.line - heading.line : 0, offset: Math.round(anchor.element.getBoundingClientRect().top)};
+    readingPositions.set(currentDocument.bufferId, position);
     while (readingPositions.size > 100) readingPositions.delete(readingPositions.keys().next().value);
+    // The host keeps it per file ("line:offset"), so the place survives closing the tab and restarting.
+    var wire = position.line + ':' + Math.max(-99999, Math.min(99999, position.offset));
+    if (/^\d+$/.test(currentDocument.bufferId) && sentReadingPositions.get(currentDocument.bufferId) !== wire && window.chrome && window.chrome.webview) {
+      sentReadingPositions.set(currentDocument.bufferId, wire);
+      window.chrome.webview.postMessage('readingPosition:' + currentDocument.bufferId + ':' + wire);
+    }
   }
+  var sentReadingPositions = new Map();
+  // Scrolling alone (no edit, no tab switch) also moves the place: capture once the reader stops scrolling.
+  var readingScrollTimer = 0;
+  document.addEventListener('scroll', function() {
+    clearTimeout(readingScrollTimer);
+    readingScrollTimer = setTimeout(captureReadingPosition, 600);
+  }, {passive: true, capture: true});
 
   function finalizeDocument(data, state, sequence) {
     var index = state === 'ready' ? buildDocumentIndex(contentEl) : {headings: [], blocks: []};
@@ -7635,14 +7729,14 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
 
       var mdText = data.markdown || '';
       if (!mdText.trim()) {
-        contentEl.innerHTML = '<div style="color:var(--muted);text-align:center;padding:60px 20px;"><em>(No content to preview)</em></div>';
+        contentEl.innerHTML = '<div style="color:var(--muted);text-align:center;padding:60px 20px;"><em>' + readerText('ui.noContent', '(No content to preview)') + '</em></div>';
         finalizeDocument(data, 'empty', sequence);
         return;
       }
 
       var html = parseWithLines(mdText);
       if (typeof DOMPurify !== 'undefined' && typeof DOMPurify.sanitize === 'function') {
-        html = DOMPurify.sanitize(html, { ADD_ATTR: ['data-line', 'data-source-unmapped', 'data-task-key', 'target', 'dir', 'align'] });
+        html = DOMPurify.sanitize(html, { FORBID_TAGS: ['style'], ADD_ATTR: ['data-line', 'data-source-unmapped', 'data-task-key', 'data-remote-src', 'data-local-path', 'target', 'dir', 'align'] });
       }
 
       contentEl.innerHTML = html;
@@ -7726,7 +7820,7 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
       }
       if (contentEl) {
         contentEl.innerHTML = '<div style="color:var(--danger);padding:24px;border:1px solid var(--danger);border-radius:8px;background:var(--code-bg);">' +
-                              '<h3 style="margin-top:0;">Preview Error</h3>' +
+                              '<h3 style="margin-top:0;">' + readerText('ui.previewError', 'Preview Error') + '</h3>' +
                               '<p>' + escapeHtml(err ? err.message : 'Error') + '</p>' +
                               '</div>';
         finalizeDocument(data, 'error', sequence);
@@ -7790,6 +7884,14 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
 
       if (data.type === 'render') {
         applyRender(data);
+      } else if (data.type === 'documentState' && data.kind === 'readingPosition') {
+        // the place saved for this file: used only when the reader has none fresher for the buffer
+        var saved = /^(\d{1,7}):(-?\d{1,6})$/.exec(String(data.value || ''));
+        var buffer = String(data.bufferId || '');
+        if (saved && !readingPositions.has(buffer)) {
+          readingPositions.set(buffer, {line: Number(saved[1]), heading: '', relativeLine: 0, offset: Number(saved[2])});
+          sentReadingPositions.set(buffer, data.value);
+        }
       } else if (data.type === 'bufferClosed') {
         readingPositions.delete(data.bufferId);
         if (currentDocument && currentDocument.bufferId === data.bufferId) currentDocument.closed = true;

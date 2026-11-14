@@ -4,6 +4,7 @@
 #include "../include/HtmlExporter.h"
 #include "../include/ThemeCatalog.h"
 #include "../include/HeadingIds.h"
+#include "../include/LinkPolicy.h"
 #include "../include/PluginInterface.h"
 #include <iostream>
 #include <fstream>
@@ -47,6 +48,17 @@ void TestHeadingIds() {
 
 void TestBiDiEngine() {
     std::cout << "[TEST] BiDiEngine..." << std::endl;
+
+    // 0. Document language by script; markup and code do not outvote the prose
+    assert(BiDiEngine::DocumentLanguage("") == "en");
+    assert(BiDiEngine::DocumentLanguage("# Hello world") == "en");
+    assert(BiDiEngine::DocumentLanguage("<p class=\"lead\">Привет, мир</p>") == "ru");
+    assert(BiDiEngine::DocumentLanguage("# План работ\n\nНужно `npm test` запустить") == "ru");
+    assert(BiDiEngine::DocumentLanguage("سلام دنیا، گفتگو") == "fa");
+    assert(BiDiEngine::DocumentLanguage("مرحبا بالعالم") == "ar");
+    assert(BiDiEngine::DocumentLanguage("שלום עולם") == "he");
+    assert(BiDiEngine::DocumentLanguage("Если a < b, то всё хорошо") == "ru"); // a bare '<' is text, not markup
+    assert(BiDiEngine::DocumentLanguage(std::string(70000, 'a') + "яяя") == "en"); // only the start is read
 
     // 1. RTL char detection
     assert(BiDiEngine::IsRTLChar(0x06AF)); // گ
@@ -328,6 +340,52 @@ void TestHtmlExporter() {
     assert(html.find(L"<ul") != std::wstring::npos);
     assert(html.find(L"</ul>") != std::wstring::npos);
     assert(html.find(L"alert-callout") != std::wstring::npos);
+
+    // Shared files keep only safe link and image schemes (the same rule the preview's link router uses)
+    {
+        assert(LinkScheme(L"JavaScript:alert(1)") == L"javascript" && LinkScheme(L" \x01java\tscript:x") == L"javascript");
+        assert(LinkScheme(L"C:\\docs\\x.md").empty() && LinkScheme(L"page.md?a=b:c").empty() && LinkScheme(L"#anchor").empty());
+        assert(LinkScheme(L"mailto:a@b.c") == L"mailto" && IsSafeLinkScheme(L"https") && !IsSafeLinkScheme(L"data") && IsSafeImageScheme(L"data"));
+        std::wstring shared = HtmlExporter::ExportToHtml(MarkdownParser::Parse(
+            L"[bad](javascript:alert) [ok](https://example.com) ![pic](vbscript:x) [rel](notes.md)\n"), L"Links", PreviewTheme::Light);
+        assert(shared.find(L"javascript:alert") == std::wstring::npos && shared.find(L"vbscript:") == std::wstring::npos);
+        assert(shared.find(L"href=\"https://example.com\"") != std::wstring::npos && shared.find(L"href=\"notes.md\"") != std::wstring::npos);
+        assert(shared.find(L">bad<") == std::wstring::npos && shared.find(L"bad") != std::wstring::npos);
+    }
+
+    // Export of the reader's rendered body: document pictures embedded, unsafe paths kept relative, no scripts
+    {
+        wchar_t temp[MAX_PATH] = {}, folder[MAX_PATH] = {};
+        assert(GetTempPathW(MAX_PATH, temp) && GetTempFileNameW(temp, L"Npe", 0, folder) && DeleteFileW(folder) && CreateDirectoryW(folder, nullptr));
+        const std::wstring picture = std::wstring(folder) + L"\\" + L"\x0434\x043e\x0442 a.png"; // "дот a.png"
+        HANDLE file = CreateFileW(picture.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, 0, nullptr);
+        DWORD written = 0;
+        assert(file != INVALID_HANDLE_VALUE && WriteFile(file, "PNGDATA", 7, &written, nullptr) && written == 7);
+        CloseHandle(file);
+        const std::string body = std::string("<p><img src=\"") + kDocumentHostUrlUtf8 + "%D0%B4%D0%BE%D1%82%20a.png\" alt=\"x\">"
+            "<img src=\"" + kDocumentHostUrlUtf8 + "..%2Fsecret.png\"><img src=\"" + kDocumentHostUrlUtf8 + "missing.png\"></p>";
+        const std::string embedded = HtmlExporter::EmbedDocumentImages(body, folder);
+        assert(embedded.find("src=\"data:image/png;base64,UE5HREFUQQ==\"") != std::string::npos);
+        assert(embedded.find("src=\"../secret.png\"") != std::string::npos && embedded.find("src=\"missing.png\"") != std::string::npos);
+        assert(embedded.find(kDocumentHostUrlUtf8) == std::string::npos);
+        const std::string page = HtmlExporter::WrapDocument(embedded, "", L"T", PreviewTheme::Light, 0, L"", false);
+        assert(page.find("<script") == std::string::npos && page.find("UE5HREFUQQ==") != std::string::npos);
+        assert(page.find("<html lang=\"en\"") != std::string::npos);
+        // a link inside the folder to a file outside it is not shared (skipped where links cannot be created)
+        const std::wstring outside = std::wstring(folder) + L".secret.png", link = std::wstring(folder) + L"\\link.png";
+        HANDLE secret = CreateFileW(outside.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+        assert(secret != INVALID_HANDLE_VALUE && WriteFile(secret, "SECRET", 6, &written, nullptr));
+        CloseHandle(secret);
+        if (CreateSymbolicLinkW(link.c_str(), outside.c_str(), SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
+            const std::string linked = HtmlExporter::EmbedDocumentImages(std::string("<img src=\"") + kDocumentHostUrlUtf8 + "link.png\">", folder);
+            assert(linked.find("U0VDUkVU") == std::string::npos && linked.find("src=\"link.png\"") != std::string::npos);
+            DeleteFileW(link.c_str());
+        } else std::cout << "  (symbolic links unavailable: link check skipped)" << std::endl;
+        DeleteFileW(outside.c_str());
+        assert(HtmlExporter::WrapDocument("<p>Привет</p>", "", L"T", PreviewTheme::Light, 0, L"", false).find("<html lang=\"ru\"") != std::string::npos);
+        DeleteFileW(picture.c_str());
+        RemoveDirectoryW(folder);
+    }
 
     // Nested lists stay nested, ordered lists keep their first number, long documents get a contents list
     {
@@ -705,6 +763,14 @@ void TestReaderThemes() {
     assert(WritePrivateProfileStringW(L"Settings", L"ContentMaxWidthPx", L"NaN", iniPath.c_str()));
     loaded.Load(iniPath);
     assert(loaded.contentFontSizePx == 15 && loaded.contentLineHeightPercent == 170 && loaded.contentMaxWidthPx == 860);
+    assert(loaded.readerLanguage == L"auto");
+    config.readerLanguage = L"ru";
+    assert(config.Save(iniPath));
+    loaded.Load(iniPath);
+    assert(loaded.readerLanguage == L"ru");
+    assert(WritePrivateProfileStringW(L"Settings", L"ReaderLanguage", L"de", iniPath.c_str()));
+    loaded.Load(iniPath);
+    assert(loaded.readerLanguage == L"auto"); // an unknown language falls back to following Notepad++
     assert(DeleteFileW(iniPath.c_str()));
     SetLastError(ERROR_SUCCESS);
     assert(!config.Save(L""));

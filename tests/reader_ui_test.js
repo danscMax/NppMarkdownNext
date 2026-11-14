@@ -29,7 +29,7 @@ async () => {
         finishAnimations();
     }
     settings();
-    expect(document.querySelectorAll('#theme-pop-list .theme-pop-item').length === 11, 'All ten legacy settings and Typography are present');
+    expect(document.querySelectorAll('#theme-pop-list .theme-pop-item').length === 12, 'All ten legacy settings, Typography and Language are present');
     expect(document.getElementById('theme-fab').getAttribute('aria-expanded') === 'true', 'Gear opens the settings menu');
     const originalText = document.getElementById('content').textContent;
     const options = [...THEME_LIST, ...window.BEARDED_VARIANTS];
@@ -79,7 +79,7 @@ async () => {
     expect(window._darkMode === -1, 'Dark mode can follow Notepad++ again');
     function resultFor(command, status, detail = '') {
         const operation = command.startsWith('copyHtml:') ? 'copyHtml' : 'saveAsHtml';
-        window.__emit({type:'operationResult',operation,status,detail,error:status==='failed'?5:0,recoveryPath:'',requestId:command.slice(operation.length+1)});
+        window.__emit({type:'operationResult',operation,status,detail,error:status==='failed'?5:0,recoveryPath:'',requestId:command.split(String.fromCharCode(10))[0].slice(operation.length+1)});
     }
     settings(); row('Copy HTML').click();
     const copy = window.__messages.findLast(message => message.startsWith('copyHtml:'));
@@ -163,6 +163,74 @@ async () => {
     warning.querySelector('.reader-warning-close').click();
     expect(warning.hidden, 'Warnings can be dismissed');
 
+    // Sections, row filters, width resets, keyboard grips, back after a jump, outline filter and width, missing images
+    await render('# Report\n\nIntro\n\n## Findings\n\nAbout [details](#details).\n\n| ID | Sev |\n|---|---|\n| A1 | High |\n| A2 | Low |\n| A3 | High |\n\n### Details\n\nDeep text.\n\n## Next\n\n![chart](img/chart.png)\n\n![abs](C:\\tmp\\x.png)\n', '36');
+    const findingsText = content.querySelector('table').closest('.reader-table-wrap').previousElementSibling;
+    const section = sectionClipboard(sectionOf(findingsText));
+    expect(section.html.includes('<h2') && section.html.includes('Deep text') && !section.html.includes('Next') && !section.html.includes('reader-col-grip') && section.text.startsWith('Findings'), 'Copy section takes the heading up to the next heading of the same level, clean');
+    const table36 = content.querySelector('table');
+    content.querySelector('td').dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 40, clientY: 40}));
+    expect(menuLabels().includes('Filter rows') && menuLabels().includes('Copy section') && !menuLabels().includes('Reset column widths'), 'The table menu offers row filtering and section copy; no reset without widths');
+    [...menu.querySelectorAll('.reader-menu-item')].find(item => item.textContent.startsWith('Filter rows')).click();
+    const filterInput = content.querySelector('.reader-table-filter input');
+    filterInput.value = 'high'; filterInput.dispatchEvent(new Event('input'));
+    expect([...table36.tBodies[0].rows].filter(row => !row.hidden).length === 2 && content.querySelector('.reader-table-filter-count').textContent === '2 / 3', 'The row filter shows matching rows and a count');
+    expect(tableClipboard(table36).text.split('\n').length === 4, 'Copy table still copies every row while filtered');
+    await render(content.textContent ? '# Report\n\nIntro\n\n## Findings\n\nAbout [details](#details).\n\n| ID | Sev |\n|---|---|\n| A1 | High |\n| A2 | Low |\n| A3 | High |\n\n### Details\n\nDeep text.\n' : '', '36');
+    expect(content.querySelector('.reader-table-filter input').value === 'high' && [...content.querySelector('table').tBodies[0].rows].filter(row => !row.hidden).length === 2, 'The row filter survives a re-render');
+    const grip36 = content.querySelector('table .reader-col-grip');
+    const before36 = content.querySelector('table').rows[0].cells[0].getBoundingClientRect().width;
+    grip36.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', shiftKey: true, bubbles: true}));
+    expect(grip36.tabIndex === 0 && Math.abs(content.querySelector('table').rows[0].cells[0].getBoundingClientRect().width - before36 - 64) < 3, 'Shift+Right on a focused grip widens the column by 64px');
+    content.querySelector('td').dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 40, clientY: 40}));
+    expect(menuLabels().includes('Reset column widths') && menuLabels().includes('Reset all column widths'), 'Width resets appear once a table has widths');
+    window.__messages.length = 0;
+    [...menu.querySelectorAll('.reader-menu-item')].find(item => item.textContent.startsWith('Reset all column widths')).click();
+    expect(content.querySelector('table').style.width === '' && window.__messages.includes('tableWidths:36:'), 'Reset all column widths clears the document and tells the host');
+    content.querySelector('.reader-table-filter .reader-warning-close').click();
+    scrollTo(0);
+    content.querySelector('a[href="#details"]').click();
+    expect(!document.getElementById('reader-back').hidden, 'Following an anchor offers Back');
+    goBackInDocument();
+    expect(scrollRoot().scrollTop === 0 && document.getElementById('reader-back').hidden, 'Back returns to the place before the jump');
+    openToc();
+    const tocFilter = document.getElementById('toc-filter');
+    tocFilter.value = 'det'; tocFilter.dispatchEvent(new Event('input'));
+    expect([...document.querySelectorAll('#toc-drawer .toc-item')].filter(link => !link.hidden).map(link => link.textContent).join() === 'Details', 'The outline filter keeps matching headings only');
+    tocFilter.value = 'zzz'; tocFilter.dispatchEvent(new Event('input'));
+    expect(!document.getElementById('toc-filter-empty').hidden, 'The outline says when nothing matches');
+    tocFilter.value = ''; tocFilter.dispatchEvent(new Event('input'));
+    document.getElementById('toc-resize').dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowLeft', bubbles: true}));
+    await settled();
+    expect(Math.abs(document.getElementById('toc-drawer').getBoundingClientRect().width - 304) < 2 && window.__state.outlineWidthPx === 304, 'The outline edge widens the outline and the width is saved');
+    window.__emit(Object.assign({}, window.__state, {outlineWidthPx: 280}));
+    closeToc();
+    await render('![chart](img/chart.png)\n\n![abs](C:\\tmp\\x.png)\n\n![up](../x.png)\n', '37');
+    const notes = [...content.querySelectorAll('.reader-image-missing')].map(note => note.textContent);
+    expect(notes.length === 3 && notes[0].includes('Save the document') && notes[1].includes('absolute path') && notes[2].includes('Save the document'), 'Pictures that cannot be shown say which file and why ' + JSON.stringify(notes));
+
+    // Save/Copy HTML send what the reader shows: clean body, contents list for 3+ headings, then the plain text
+    await render('# One\n\n## Two\n\n## Three\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n![net](https://example.com/n.png)\n\nText[^1]\n\n[^1]: Note\n', '38');
+    const payload = exportPayload();
+    const lengthEnd = payload.indexOf('\n', 1), htmlLength = Number(payload.slice(1, lengthEnd));
+    const exportedHtml = payload.slice(lengthEnd + 1, lengthEnd + 1 + htmlLength), exportedText = payload.slice(lengthEnd + 1 + htmlLength);
+    expect(payload.charAt(0) === '\n' && exportedHtml.startsWith('<nav class="export-toc"') && exportedHtml.includes('class="footnotes"'), 'The export body is the rendered document with a contents list and footnotes');
+    expect(!/reader-col-grip|reader-table-wrap|data-line|reader-remote-image|reader-copy-code/.test(exportedHtml) && exportedHtml.includes('src="https://example.com/n.png"'), 'The export body carries no reader decorations and keeps remote picture addresses');
+    expect(exportedText.startsWith('One') && exportedText.split('Two').length === 2 && exportedText.includes('Note'), 'The export plain text follows the document (headings once)');
+    expect(!performance.getEntriesByType('resource').some(entry => entry.name.includes('example.com/n.png')), 'Exporting a page with an unclicked web picture fetches nothing');
+    const crafted = document.createElement('div');
+    crafted.innerHTML = '<a href="tel:123">t</a><a href="notes.md#x">n</a><a href="https://e.com">w</a><img data-remote-src="file:///C:/secret.png"><img data-remote-src="//cdn.e.com/p.png">';
+    const cleaned = cleanReaderClone(crafted).innerHTML;
+    expect(!cleaned.includes('tel:') && cleaned.includes('href="notes.md#x"') && cleaned.includes('href="https://e.com"') && !cleaned.includes('file:') && cleaned.includes('src="//cdn.e.com/p.png"'), 'Copies keep only safe links and web picture addresses');
+    const tableSection = sectionClipboard(sectionOf(content.querySelector('table')));
+    expect(!tableSection.html.includes('reader-table-wrap') && tableSection.html.includes('<table'), 'A copied section holds its tables without the reader wrapper');
+    expect(rt('toast.sectionMissing', 'a$&b') === window.READER_STRINGS.en['toast.sectionMissing'].replace('{0}', function() { return 'a$&b'; }), 'Arguments with $ stay literal text');
+    window.__messages.length = 0;
+    settings(); row('Copy HTML').click();
+    const copyMessage = window.__messages.find(message => message.startsWith('copyHtml:'));
+    expect(copyMessage && copyMessage.indexOf('\n') > 0 && copyMessage.includes('export-toc'), 'Copy HTML sends the rendered content with its request');
+    resultFor(copyMessage.split('\n')[0], 'succeeded');
+
     // Shortcuts follow the typed letter, and the physical key only where the layout types no Latin letter
     expect(shortcutLetter({key: 'а', code: 'KeyF'}, 'f') && shortcutLetter({key: 'f', code: 'KeyY'}, 'f') && !shortcutLetter({key: 'u', code: 'KeyF'}, 'f') && !shortcutLetter({key: 'l', code: 'KeyP'}, 'p'), 'Ctrl+F/Ctrl+P work on Russian, Dvorak and AZERTY layouts');
     // At most the 60 most recently resized tables of a document are sent to the host
@@ -177,8 +245,29 @@ async () => {
     expect(documentRelativeUrl('img/a b.png', base) === base + 'img/a%20b.png' && documentRelativeUrl('./x/../y.png', base) === base + 'y.png', 'Relative image paths map into the document folder');
     expect(['..%2f..%2fx.png', 'a%5Cb.png', 'x/%2e%2e/y.png', '..%20/x.png', '.../x.png', 'x.png:stream', 'dir./x.png', 'con.png', 'img/NUL', 'COM1.png', 'con.tar.png', 'conin$.png', 'CONOUT$', 'com².png', 'lpt¹.png'].every(src => documentRelativeUrl(src, base) === null) && documentRelativeUrl('console.png', base) === base + 'console.png', 'Encoded separators, dot segments and device names cannot leave the folder');
     expect(['../up.png', '/root.png', 'C:\\x.png', 'https://e.com/a.png', 'data:image/png;base64,AA', '//host/a.png', ''].every(src => documentRelativeUrl(src, base) === null) && documentRelativeUrl('a.png', '') === null, 'Absolute, external and escaping paths are left alone');
+    await render('<style>@import url(https://e.com/s.css);</style>\n\n<svg><image href="https://e.com/i.png"/></svg>\n\n<span style="background:\\75rl(https://e.com/x.png)">esc</span>\n', '36');
+    expect(!content.querySelector('style') && !content.querySelector('svg image[href]') && !content.querySelector('span[style]'), 'Style sheets, SVG references and escaped styles cannot fetch on render');
+    // Network images are never fetched on their own: the sanitizer moves the URL aside, a button loads it
+    await render('![chart](https://example.com/chart.png)\n\n<img src="//cdn.example.com/p.gif" srcset="https://e.com/a.png 2x" style="background:url(https://e.com/t.png)">\n\n![local](data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==)\n', '35');
+    const remote = [...content.querySelectorAll('img[data-remote-src]')];
+    expect(remote.length === 2 && remote.every(img => !img.hasAttribute('src') && !img.hasAttribute('srcset') && !img.hasAttribute('style')) && content.querySelector('img[alt="local"]').getAttribute('src').startsWith('data:'), 'Remote image sources are moved aside before anything is fetched; data images stay');
+    const loadButton = content.querySelector('.reader-remote-image');
+    expect(content.querySelectorAll('.reader-remote-image').length === 2 && loadButton.textContent.includes('example.com') && loadButton.textContent.includes('chart'), 'Each remote image gets a load button naming its host');
+    loadButton.click();
+    expect(remote[0].getAttribute('src') === 'https://example.com/chart.png' && content.querySelectorAll('.reader-remote-image').length === 1, 'The button loads only that image');
     window.__emit({type:'notice', text:'Native notice'});
     expect(document.getElementById('toast-msg').textContent === 'Native notice', 'Host notices appear as toasts');
+
+    // The reading place saved for a file (host message) is restored when the file is shown again
+    const placeDoc = Array.from({length: 120}, (_, i) => 'Place ' + i).join('\n\n');
+    window.__emit({type: 'documentState', kind: 'readingPosition', bufferId: '51', value: '80:0'});
+    await render(placeDoc, '51', -1);
+    const placed = content.querySelector('[data-line="80"]').getBoundingClientRect().top;
+    expect(Math.abs(placed) < 3, 'A saved reading place is restored for the file (' + Math.round(placed) + ')');
+    window.__messages.length = 0;
+    scrollTo(scrollRoot().scrollTop + 400);
+    await new Promise(resolve => setTimeout(resolve, 800));
+    expect(window.__messages.some(message => /^readingPosition:51:\d+:-?\d+$/.test(message)), 'Scrolling saves the new reading place for the file');
 
     // Scrolling: another document jumps to its caret without animation; typing on the caret line does not re-centre
     const longDoc = Array.from({length: 120}, (_, i) => 'Line ' + i).join('\n\n');
@@ -216,6 +305,10 @@ async () => {
     const beforeTypography = window.__messages.length;
     setTypographyFromMenu('fontSize', 999);
     expect(window.__messages.length === beforeTypography, 'Typography rejects unbounded CSS values');
+    setTypographyFromMenu('readingWidth', 0);
+    await settled();
+    const pane = document.getElementById('reader-wrap'), paneInner = pane.clientWidth - parseFloat(getComputedStyle(pane).paddingLeft) - parseFloat(getComputedStyle(pane).paddingRight);
+    expect(Math.abs(document.getElementById('content').getBoundingClientRect().width - paneInner) < 2 && document.getElementById('theme-pop-list').textContent.includes('Whole pane'), 'Reading width "Whole pane" uses the full panel');
     for (const [kind, value] of [['fontSize',15],['lineHeight',170],['readingWidth',860]]) setTypographyFromMenu(kind,value);
 
     await render('# Same\n\n# Same\n\n# Привет Мир!\n\n# !!!\n');
@@ -364,10 +457,40 @@ async () => {
             }
         }
     } finally { frame.remove(); }
+    // Language: the setting switches the reader's own text (static, menu, re-rendered controls); never the document.
+    const ru = window.READER_STRINGS.ru, en = window.READER_STRINGS.en;
+    window.__emit({type:'render',markdown:'# Заголовок\n\n```js\nx\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n',bufferId:'31',caretLine:-1,renderRevision:'lang1',title:'Lang',isDark:true,isBiDi:true,themeId:window._themeId});
+    await new Promise(requestAnimationFrame); finishAnimations();
+    window.__emit(Object.assign({}, window.__lastRender, {lang: 'ru'})); await new Promise(requestAnimationFrame);
+    expect(document.getElementById('content').lang === 'ru' && document.documentElement.lang === 'en', 'Content carries the document language, the page the interface language');
+    settings();
+    expect(row(en['set.language'].replace('{0}', en['set.languageAuto'])), 'Language row shows the Auto setting');
+    row(en['set.language'].split('{0}')[0]).click(); finishAnimations();
+    expect(document.querySelector('#theme-popover .theme-pop-title').textContent === en['set.languageTitle'], 'Language submenu has its title');
+    expect(['As Notepad++', 'English', 'Русский'].every(label => row(label)), 'Language submenu offers Auto, English and Russian');
+    row('Русский').click();
+    await new Promise(resolve => setTimeout(resolve, 30)); await new Promise(requestAnimationFrame); finishAnimations();
+    expect(window.__messages.includes('readerLanguage:ru'), 'Choosing Russian tells the host');
+    expect(document.documentElement.dataset.uiLanguage === 'ru', 'The host switches the reader to Russian');
+    expect(document.getElementById('toc-fab').title === ru['ui.outlineButton'] && document.querySelector('.toc-title').textContent === ru['ui.outlineTitle']
+        && document.getElementById('theme-fab').getAttribute('aria-label') === ru['ui.settingsButton'], 'Fixed controls switch to Russian');
+    expect(document.getElementById('toc-filter').placeholder === ru['ui.filterHeadings'] && document.getElementById('toc-resize').title === ru['ui.resizeOutline'], 'Outline controls switch to Russian');
+    expect(document.querySelector('#content .reader-copy-code').title === ru['ui.copyCode'], 'Re-rendered code buttons are in Russian');
+    expect(document.querySelector('#content .reader-col-grip').getAttribute('aria-label') === ru['ui.resizeColumnLabel'].replace('{0}', '1'), 'Column grips are in Russian');
+    expect(document.querySelector('#content h1').textContent.includes('Заголовок') && document.querySelector('#content code').textContent.trim() === 'x', 'The document text itself is unchanged');
+    settings();
+    expect(document.querySelector('#theme-popover .theme-pop-title').textContent === ru['set.title'] && row(ru['set.language'].replace('{0}', 'Русский')) && row(ru['set.sync']), 'Settings menu is in Russian');
+    row(ru['set.theme'].split('{0}')[0]).click(); finishAnimations();
+    expect(row(ru['theme.follow']) && row(ru['theme.light']), 'Built-in theme names are translated');
+    settings(); row(ru['set.language'].split('{0}')[0]).click(); finishAnimations();
+    row(ru['set.languageAuto']).click();
+    await new Promise(resolve => setTimeout(resolve, 30)); await new Promise(requestAnimationFrame); finishAnimations();
+    expect(document.documentElement.dataset.uiLanguage === 'en' && document.getElementById('toc-fab').title === en['ui.outlineButton'], 'Auto returns to the host language');
+    closeThemePopover();
     window.__state.sync = true; window.__emit(window.__state);
     selectTheme('bearded-v-gold-d-raynh');
     window.__emit({type: 'render', markdown: '', themeId: window._themeId, isDark: true, isBiDi: true});
     finishAnimations();
     expect(document.getElementById('content').textContent.includes('No content to preview'), 'An empty document clears the old preview');
-    return {checks: checks.length, themes: options.length, settings: 11, gold, passed: true};
+    return {checks: checks.length, themes: options.length, settings: 12, gold, passed: true};
 }

@@ -29,6 +29,8 @@ struct PluginConfig {
     int contentFontSizePx = 15;
     int contentLineHeightPercent = 170;
     int contentMaxWidthPx = 860;
+    std::wstring readerLanguage = L"auto"; // "auto" (as Notepad++), "en" or "ru"
+    int outlineWidthPx = 280; // the outline drawer's width (the user drags its edge)
     bool isSmartBiDiEnabled = true;
     ReaderTheme theme = ReaderTheme::FollowNpp;
     std::wstring beardedVariant;

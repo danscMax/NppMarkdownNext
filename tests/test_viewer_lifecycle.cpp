@@ -2,6 +2,7 @@
 #include "../include/Resource.h"
 #include "../include/BiDiEngine.h"
 #include "../include/Scintilla.h"
+#include "../include/ReaderText.h"
 #include <cassert>
 #include <cstring>
 #include <iostream>
@@ -143,7 +144,7 @@ struct ReaderLifecycleTestPeer {
             host.Cleanup();
             if (owner) DestroyWindow(owner);
             DeleteFileW(iniPath.c_str());
-            DeleteFileW((editor.configRoot + L"\\NppMarkdownNext.tables.ini").c_str());
+            DeleteFileW((editor.configRoot + L"\\NppMarkdownNext.documents.ini").c_str());
             assert(RemoveDirectoryW(editor.configRoot.c_str()));
         }
 
@@ -436,6 +437,14 @@ struct ReaderLifecycleTestPeer {
         fixture.Tick();
         assert(fixture.Count(L"\"type\":\"render\"") == 1 && fixture.Count(L"Edited notes") == 1);
         assert(fixture.Count(L"\"docBase\":\"https://npp-reader-document.local/\"") == 0); // no webview in the test: no mapping
+
+        // Reading width presets come from one list: 0 (the whole pane) is a valid choice, other values are not
+        host.OnSettingsMessage(L"readingWidth:0");
+        assert(host.m_config.contentMaxWidthPx == 0);
+        host.OnSettingsMessage(L"readingWidth:999");
+        assert(host.m_config.contentMaxWidthPx == 0);
+        host.OnSettingsMessage(L"readingWidth:860");
+        assert(host.m_config.contentMaxWidthPx == 860);
     }
 
     static void LinksOpenOnlySafeTargets() {
@@ -446,8 +455,20 @@ struct ReaderLifecycleTestPeer {
         assert(file != INVALID_HANDLE_VALUE);
         CloseHandle(file);
         fixture.editor.path = folder + L"\\doc.md";
-        fixture.host.OnSettingsMessage(L"openLink:plan.md#section");
+        fixture.host.SetPanelVisible(true);
+        fixture.host.OnSettingsMessage(L"openLink:plan.md#%D1%80%D0%B8%D1%81%D0%BA%D0%B8");
         assert(fixture.editor.lastOpened == plan);
+        // the opened document scrolls to the section once it is rendered (Notepad++ activates it)
+        fixture.messages.clear();
+        fixture.editor.path = plan;
+        fixture.host.OnBufferActivated();
+        fixture.Tick();
+        assert(fixture.Count(L"\"type\":\"scrollToAnchor\"") == 1 && fixture.Count(L"\"id\":\"%D1%80%D0%B8%D1%81%D0%BA%D0%B8\"") == 1);
+        // a section link into the document already on screen scrolls at once
+        fixture.messages.clear();
+        fixture.host.OnSettingsMessage(L"openLink:plan.md#next");
+        assert(fixture.Count(L"\"id\":\"next\"") == 1);
+        fixture.editor.path = folder + L"\\doc.md";
         fixture.editor.lastOpened.clear();
         fixture.messages.clear();
         fixture.host.OnSettingsMessage(L"openLink:\\\\attacker.example\\share\\x.md");
@@ -476,6 +497,40 @@ struct ReaderLifecycleTestPeer {
         DeleteFileW(plan.c_str());
     }
 
+    static void ReadingPlaceAndRenames() {
+        Fixture fixture;
+        fixture.host.SetPanelVisible(true);
+        fixture.Ready();
+        const std::wstring id = std::to_wstring(fixture.editor.bufferId);
+        fixture.host.OnSettingsMessage(L"readingPosition:" + id + L":120:-40");
+        fixture.host.OnSettingsMessage(L"readingPosition:" + id + L":12;x");
+        assert(fixture.host.LoadDocumentState(DocumentState::ReadingPosition, fixture.editor.path) == L"120:-40");
+        fixture.host.OnSettingsMessage(L"tableWidths:" + id + L":0a1b2c3d:150,250");
+        fixture.messages.clear();
+        fixture.host.OnBufferActivated();
+        fixture.Tick();
+        assert(fixture.Count(L"\"kind\":\"readingPosition\"") == 1 && fixture.Count(L"\"value\":\"120:-40\"") == 1);
+        // Save As / rename: the state follows the document to its new path (and the old path keeps it)
+        const std::wstring oldPath = fixture.editor.path;
+        fixture.editor.path = L"C:\\reader-test\\renamed.md";
+        fixture.host.OnDocumentPathChanged(fixture.editor.bufferId);
+        assert(fixture.host.LoadDocumentState(DocumentState::ReadingPosition, fixture.editor.path) == L"120:-40");
+        assert(fixture.host.LoadDocumentState(DocumentState::TableWidths, fixture.editor.path) == L"0a1b2c3d:150,250");
+        assert(fixture.host.LoadDocumentState(DocumentState::TableWidths, oldPath) == L"0a1b2c3d:150,250");
+        // it reached the file, not just the session cache
+        fixture.host.m_documentStateCache.clear();
+        assert(fixture.host.LoadDocumentState(DocumentState::ReadingPosition, fixture.editor.path) == L"120:-40");
+
+        // the first version's NppMarkdownNext.tables.ini moves to the new name once, keeping its widths
+        const std::wstring documents = fixture.editor.configRoot + L"\\NppMarkdownNext.documents.ini";
+        const std::wstring legacy = fixture.editor.configRoot + L"\\NppMarkdownNext.tables.ini";
+        assert(MoveFileExW(documents.c_str(), legacy.c_str(), 0));
+        fixture.host.Init(GetModuleHandleW(nullptr), fixture.host.m_nppData);
+        assert(GetFileAttributesW(legacy.c_str()) == INVALID_FILE_ATTRIBUTES && GetFileAttributesW(documents.c_str()) != INVALID_FILE_ATTRIBUTES);
+        fixture.host.m_documentStateCache.clear();
+        assert(fixture.host.LoadDocumentState(DocumentState::TableWidths, oldPath) == L"0a1b2c3d:150,250");
+    }
+
     static void TableWidthsPersistPerDocument() {
         Fixture fixture;
         fixture.host.SetPanelVisible(true);
@@ -485,24 +540,30 @@ struct ReaderLifecycleTestPeer {
         fixture.host.OnSettingsMessage(L"tableWidths:" + id + L":bad=value");
         fixture.host.OnSettingsMessage(L"tableWidths:x1:0a1b2c3d:1");
         fixture.host.OnSettingsMessage(L"tableWidths:999:0a1b2c3d:1");
-        assert(fixture.host.LoadTableWidths(fixture.editor.path) == L"0a1b2c3d:120,200");
-        assert(fixture.host.LoadTableWidths(L"C:\\READER-TEST\\ONE.MD") == L"0a1b2c3d:120,200");
-        fixture.host.m_tableWidthsCache.clear(); // a restarted Notepad++ has only the file
-        assert(fixture.host.LoadTableWidths(fixture.editor.path) == L"0a1b2c3d:120,200");
+        assert(fixture.host.LoadDocumentState(DocumentState::TableWidths, fixture.editor.path) == L"0a1b2c3d:120,200");
+        assert(fixture.host.LoadDocumentState(DocumentState::TableWidths, L"C:\\READER-TEST\\ONE.MD") == L"0a1b2c3d:120,200");
+        fixture.host.m_documentStateCache.clear(); // a restarted Notepad++ has only the file
+        assert(fixture.host.LoadDocumentState(DocumentState::TableWidths, fixture.editor.path) == L"0a1b2c3d:120,200");
         fixture.messages.clear();
         fixture.host.OnBufferActivated();
         fixture.Tick();
-        assert(fixture.Count(L"\"type\":\"tableWidths\"") == 1 && fixture.Count(L"\"value\":\"0a1b2c3d:120,200\"") == 1);
+        assert(fixture.Count(L"\"kind\":\"tableWidths\"") == 1 && fixture.Count(L"\"value\":\"0a1b2c3d:120,200\"") == 1);
         fixture.messages.clear();
         fixture.editor.text = "# Typed\n";
         fixture.host.OnDocModified();
         fixture.Tick();
-        assert(fixture.Count(L"\"type\":\"render\"") == 1 && fixture.Count(L"\"type\":\"tableWidths\"") == 0);
+        assert(fixture.Count(L"\"type\":\"render\"") == 1 && fixture.Count(L"\"kind\":\"tableWidths\"") == 0);
         fixture.host.OnSettingsMessage(L"tableWidths:" + id + L":");
-        assert(fixture.host.LoadTableWidths(fixture.editor.path).empty());
+        assert(fixture.host.LoadDocumentState(DocumentState::TableWidths, fixture.editor.path).empty());
         fixture.editor.path = L"new 1";
         fixture.host.OnSettingsMessage(L"tableWidths:" + id + L":0a1b2c3d:1");
-        assert(fixture.host.LoadTableWidths(L"new 1").empty());
+        assert(fixture.host.LoadDocumentState(DocumentState::TableWidths, L"new 1").empty());
+        // an unwritable state file: reported once, not after every scroll; an unchanged value is not rewritten
+        fixture.editor.path = L"C:\\Reader-Test\\one.md";
+        fixture.host.m_documentStatePath = L"Z:\\no-such-folder-reader-test\\documents.ini";
+        fixture.messages.clear();
+        for (const wchar_t* place : {L"10", L"20", L"20", L"30"}) fixture.host.OnSettingsMessage(L"readingPosition:" + id + L":" + place);
+        assert(fixture.Count(L"saveSettings") == 1);
     }
 
     static void SettingsWarningLifecycle() {
@@ -675,6 +736,25 @@ struct ReaderLifecycleTestPeer {
         assert(fixture.editor.writes == 1 && fixture.editor.text == "- [x] Task\n");
     }
 
+    static void ReaderLanguageFollowsSetting() {
+        Fixture fixture;
+        fixture.Ready();
+        fixture.host.OnSettingsMessage(L"readerLanguage:ru");
+        assert(fixture.host.m_config.readerLanguage == L"ru" && ReaderTextRussian());
+        assert(fixture.Count(L"\"language\":\"ru\",\"languageSetting\":\"ru\"") >= 1);
+        assert(Tr("status.retry") != L"Retry preview");
+        assert(Tr("link.notFound", L"x.md").find(L"x.md") != std::wstring::npos);
+        assert(Tr("no.such.key") == L"no.such.key");
+        for (const char* key : kPluginMenuKeys) assert(Tr(key) != std::wstring(key, key + std::strlen(key)));
+        fixture.host.OnSettingsMessage(L"readerLanguage:de");
+        assert(fixture.host.m_config.readerLanguage == L"ru");
+        fixture.host.OnSettingsMessage(L"readerLanguage:auto");
+        // the test host has no Notepad++ window to report a language, so Auto means English here
+        assert(fixture.host.m_config.readerLanguage == L"auto" && !ReaderTextRussian());
+        assert(fixture.Count(L"\"language\":\"en\",\"languageSetting\":\"auto\"") >= 1);
+        assert(Tr("status.retry") == L"Retry preview");
+    }
+
     static void ReadingSettingsAndPalettePriority() {
         Fixture fixture;
         fixture.Ready();
@@ -710,6 +790,7 @@ int main(int argc, char** argv) {
         {"SaveAsAndRenamePolicy", Peer::SaveAsAndRenamePolicy},
         {"SettingsWarningLifecycle", Peer::SettingsWarningLifecycle},
         {"TableWidthsPersistPerDocument", Peer::TableWidthsPersistPerDocument},
+        {"ReadingPlaceAndRenames", Peer::ReadingPlaceAndRenames},
         {"LinksOpenOnlySafeTargets", Peer::LinksOpenOnlySafeTargets},
         {"EditorIntegrationDetails", Peer::EditorIntegrationDetails},
         {"TypedOperationResultsAndRequests", Peer::TypedOperationResultsAndRequests},
@@ -717,6 +798,7 @@ int main(int argc, char** argv) {
         {"CheckboxProtocolIsStrict", Peer::CheckboxProtocolIsStrict},
         {"CheckboxChangesOnlyVerifiedMarker", Peer::CheckboxChangesOnlyVerifiedMarker},
         {"CheckboxRejectsStaleBufferRevisionAndContent", Peer::CheckboxRejectsStaleBufferRevisionAndContent},
+        {"ReaderLanguageFollowsSetting", Peer::ReaderLanguageFollowsSetting},
         {"ReadingSettingsAndPalettePriority", Peer::ReadingSettingsAndPalettePriority}
     };
     const char* selected = argc == 3 && std::strcmp(argv[1], "--case") == 0 ? argv[2] : nullptr;
