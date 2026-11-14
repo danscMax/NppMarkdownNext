@@ -254,6 +254,8 @@ function Invoke-Probe([string]$Command='state',[string]$Expression='',[string]$S
     $info.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
+    $info.StandardOutputEncoding = [Text.Encoding]::UTF8 # the probe writes UTF-8 JSON; the console code page would garble non-ASCII text
+    $info.StandardErrorEncoding = [Text.Encoding]::UTF8
     foreach ($argument in @($probe,'--port',[string]$port,'--command',$Command)) { $info.ArgumentList.Add($argument) }
     if ($Expression) {
         $info.ArgumentList.Add('--expression-base64')
@@ -320,7 +322,7 @@ try {
     Assert-Check ([string]::Equals($actualConfig.TrimEnd('\'),$config,[StringComparison]::OrdinalIgnoreCase)) 'IsolatedConfigurationRoot' $actualConfig
     Assert-Restored $state 'InitialRender'
     $state = Invoke-Probe 'inspect' '' (Join-Path $runRoot 'initial-gold.png')
-    Assert-Check ($state.settings.Count -eq 11 -and @($state.settings | Where-Object { $_ -eq 'Typography' }).Count -eq 1) 'FullSettingsMenu' 'All eleven root rows including Typography are present.'
+    Assert-Check ($state.settings.Count -eq 12 -and @($state.settings | Where-Object { $_ -eq 'Typography' }).Count -eq 1) 'FullSettingsMenu' 'All twelve root rows including Typography and Language are present.'
     Assert-Check ($state.colors.background -eq 'rgb(15, 22, 40)' -and $state.colors.heading -eq 'rgb(255, 208, 0)' -and
         $state.colors.strong -eq 'rgb(237, 242, 247)' -and $state.colors.emphasis -eq 'rgb(255, 130, 63)' -and
         $state.colors.code -eq 'rgb(161, 103, 255)' -and $state.colors.quote -eq 'rgb(228, 172, 115)' -and
@@ -334,6 +336,18 @@ try {
     Start-Sleep -Milliseconds 800
     $toast = Invoke-Probe 'evaluate' 'document.getElementById("toast-msg").textContent'
     Assert-Check (!([string]$toast.value).Contains('newer')) 'NativeFindBarStarts' ([string]$toast.value)
+
+    # Language: the reader asks for Russian; the host saves it, renames its Plugins menu and re-renders the document.
+    Invoke-Probe 'evaluate' 'window.chrome.webview.postMessage("readerLanguage:ru")' | Out-Null
+    Start-Sleep -Milliseconds 900
+    $language = Invoke-Probe 'evaluate' 'document.documentElement.dataset.uiLanguage + "|" + document.getElementById("toc-fab").title'
+    Assert-Check ([string]$language.value -eq 'ru|Оглавление') 'NativeLanguageSwitch' ([string]$language.value)
+    $languageMenu = [IntPtr][NppSmokeApi]::Scalar($nppPid,$main,2049,0,0)
+    Assert-Check ([NppSmokeApi]::FindCommand($languageMenu,'Показать/скрыть Markdown Reader') -ne 0) 'PluginMenuRenamed'
+    Assert-Check ((Get-Content -LiteralPath $ini -Raw) -match 'ReaderLanguage=ru') 'LanguageSaved'
+    Invoke-Probe 'evaluate' 'window.chrome.webview.postMessage("readerLanguage:auto")' | Out-Null
+    Start-Sleep -Milliseconds 900
+    Assert-Check ([NppSmokeApi]::FindCommand($languageMenu,'Toggle Markdown Reader') -ne 0) 'PluginMenuRestored'
 
     Assert-Check ([NppSmokeApi]::PathCommand($nppPid,$main,2101,0,$plain) -ne 0) 'OpenPlainTextSdk'
     $watch.Restart()

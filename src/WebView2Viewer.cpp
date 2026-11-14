@@ -2,6 +2,7 @@
 #include "../include/BiDiEngine.h"
 #include "../include/NppLog.h"
 #include "../include/LinkPolicy.h"
+#include "../include/ReaderText.h"
 #include "../include/Config.h"
 #include "KelkBundle.inc"
 #include "ReaderThemes.inc"
@@ -636,7 +637,7 @@ bool WebView2Viewer::StartFind(const std::wstring& term) {
         handler->Release();
     }
     ReleaseCom(options); ReleaseCom(environment); ReleaseCom(find); ReleaseCom(webView);
-    if (!started) PostNotice(L"Find in the preview needs a newer Microsoft Edge WebView2 Runtime. Ctrl+F in the editor still works.");
+    if (!started) PostNotice(Tr("runtime.find"));
     return started;
 }
 
@@ -645,7 +646,7 @@ bool WebView2Viewer::ShowPrintDialog() {
     bool shown = m_pWebView && SUCCEEDED(m_pWebView->QueryInterface(IID_ICoreWebView2_16, reinterpret_cast<void**>(&webView))) &&
                  SUCCEEDED(webView->ShowPrintUI(COREWEBVIEW2_PRINT_DIALOG_KIND_BROWSER));
     ReleaseCom(webView);
-    if (!shown) PostNotice(L"Printing needs a newer Microsoft Edge WebView2 Runtime.");
+    if (!shown) PostNotice(Tr("runtime.print"));
     return shown;
 }
 
@@ -679,7 +680,9 @@ void WebView2Viewer::SyncUiState(const PluginConfig& config) {
          << L",\"fontSizePx\":" << config.contentFontSizePx
          << L",\"lineHeightPercent\":" << config.contentLineHeightPercent
          << L",\"maxWidthPx\":" << config.contentMaxWidthPx
-         << L",\"outlineWidthPx\":" << config.outlineWidthPx << L"}";
+         << L",\"outlineWidthPx\":" << config.outlineWidthPx
+         << L",\"language\":\"" << (ReaderTextRussian() ? L"ru" : L"en") << L"\""
+         << L",\"languageSetting\":\"" << EscapeJsonString(config.readerLanguage) << L"\"}";
     PostJson(json.str());
 }
 

@@ -90,6 +90,7 @@ private:
     COLORREF StatusColor(bool background) const;
     std::wstring GetCurrentBufferPath() const;
     std::wstring GetCurrentDocumentFolder() const;
+    void ApplyReaderLanguage();
     bool IsCurrentBufferMarkdown() const;
 
     static LRESULT CALLBACK PanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -113,6 +114,7 @@ private:
     bool m_isPanelRegistered = false;
     bool m_isPanelVisible = false;
     bool m_userClosedPanel = false;
+    bool m_nativeLanguageRussian = false; // Notepad++ itself is shown in Russian
     bool m_restorePanelOnStartup = false; // the panel was open when Notepad++ closed (used when auto-show is off)
     HFONT m_statusFont = nullptr;
     UINT m_statusFontDpi = 0;

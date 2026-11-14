@@ -137,11 +137,11 @@ body.toc-open #toc-fab { right: calc(var(--toc-width, 280px) + 52px); }
 )TOOLS_CSS";
 
 inline constexpr const char* s_readerToolsHtml = R"TOOLS_HTML(
-<button id="toc-fab" title="Outline" aria-label="Outline" aria-controls="toc-drawer" onclick="toggleTocFromMenu()">
+<button id="toc-fab" title="Outline" aria-label="Outline" data-i18n-title="ui.outlineButton" data-i18n-aria="ui.outlineButton" aria-controls="toc-drawer" onclick="toggleTocFromMenu()">
   <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg>
 </button>
 <div id="reader-menu" role="menu" hidden></div>
-<button id="reader-back" type="button" title="Back to where you were (Alt+Left)" onclick="goBackInDocument()" hidden>&#8592; Back</button>
+<button id="reader-back" type="button" title="Back to where you were (Alt+Left)" data-i18n="ui.back" data-i18n-title="ui.backTitle" onclick="goBackInDocument()" hidden>&#8592; Back</button>
 )TOOLS_HTML";
 
 inline constexpr const char* s_readerToolsScript = R"TOOLS_JS(
@@ -167,8 +167,8 @@ function setReaderWarning(id, text) {
     var close = document.createElement('button');
     close.className = 'reader-warning-close';
     close.type = 'button';
-    close.title = 'Dismiss';
-    close.setAttribute('aria-label', 'Dismiss');
+    close.title = rt('warn.dismiss');
+    close.setAttribute('aria-label', close.title);
     close.textContent = '×';
     close.addEventListener('click', function() { warning.hidden = true; warning.textContent = ''; });
     warning.append(span, close);
@@ -176,7 +176,7 @@ function setReaderWarning(id, text) {
 // A script failure outside the renderer's own error view would otherwise only reach the host's log.
 window.addEventListener('error', function(event) {
     if (event.target !== window) return; // resource load errors (a missing image) are not script failures
-    setReaderWarning('reader-script-warning', 'The preview hit a script error and may be incomplete: ' + (event.message || 'unknown error') + '. Reopen the panel to reload it.');
+    setReaderWarning('reader-script-warning', rt('warn.script', event.message || rt('warn.unknownError')));
 });
 
 // ---- Clipboard -------------------------------------------------------------------------------------------
@@ -192,7 +192,7 @@ function copyToClipboard(html, text) {
     }
     document.addEventListener('copy', onCopy, true);
     try { document.execCommand('copy'); } catch (e) {} finally { document.removeEventListener('copy', onCopy, true); }
-    if (!copied) setReaderWarning('reader-operation-warning', 'Copying failed. Select the text and press Ctrl+C.');
+    if (!copied) setReaderWarning('reader-operation-warning', rt('warn.copyFailed'));
     return copied;
 }
 function codeText(pre) {
@@ -236,8 +236,8 @@ function decorateCodeBlocks() {
         var button = document.createElement('button');
         button.type = 'button';
         button.className = 'reader-copy-code';
-        button.title = 'Copy code';
-        button.setAttribute('aria-label', 'Copy code');
+        button.title = rt('ui.copyCode');
+        button.setAttribute('aria-label', button.title);
         button.innerHTML = READER_COPY_ICON;
         button.addEventListener('click', function(event) {
             event.stopPropagation();
@@ -322,7 +322,7 @@ function exportPayload() {
     if (headings.length >= 3) { // the same rule as the native exporter: longer documents get a contents list
         var nav = document.createElement('nav');
         nav.className = 'export-toc';
-        nav.setAttribute('aria-label', 'Contents');
+        nav.setAttribute('aria-label', rt('ui.contents'));
         headings.forEach(function(heading) {
             var link = document.createElement('a');
             link.className = 'toc-item toc-l' + heading.level;
@@ -355,7 +355,7 @@ document.addEventListener('auxclick', function(event) { if (event.target.closest
 // ---- Find / print ----------------------------------------------------------------------------------------
 function findInPreview() {
     var selection = String(window.getSelection ? window.getSelection() : '').trim().slice(0, 256);
-    if (!postToHost(selection && selection.indexOf('\n') < 0 ? 'find:' + selection : 'find')) showToast('Find is available in the preview panel');
+    if (!postToHost(selection && selection.indexOf('\n') < 0 ? 'find:' + selection : 'find')) showToast(rt('toast.findPanelOnly'));
 }
 function printPreview() { closeReaderMenu(); if (!postToHost('print')) window.print(); }
 // Ctrl+<letter> as the user means it: the typed letter on Latin layouts (Dvorak, AZERTY move keys), and the
@@ -385,20 +385,20 @@ function readerMenuItems(target) {
     var bufferId = window.readerDocumentIndex ? window.readerDocumentIndex.bufferId : '';
     var anyWidths = Array.from(readerColumnWidths.keys()).some(function(key) { return key.indexOf(bufferId + '|') === 0; });
     var items = [
-        {label: 'Copy', key: 'Ctrl+C', disabled: !selection, run: function() { document.execCommand('copy'); }},
-        link ? {label: 'Copy link address', run: function() { copyToClipboard('', link.getAttribute('href')); }} : null,
-        pre ? {label: 'Copy code', run: function() { copyToClipboard('', codeText(pre)); }} : null,
-        table ? {label: 'Copy table', run: function() { var data = tableClipboard(table); if (copyToClipboard(data.html, data.text)) showToast('Table copied'); }} : null,
-        section ? {label: 'Copy section', run: function() { var data = sectionClipboard(section); if (copyToClipboard(data.html, data.text)) showToast('Section copied'); }} : null,
-        {label: 'Select all', key: 'Ctrl+A', run: function() { var range = document.createRange(); range.selectNodeContents(document.getElementById('content')); var s = window.getSelection(); s.removeAllRanges(); s.addRange(range); }},
+        {label: rt('menu.copy'), key: 'Ctrl+C', disabled: !selection, run: function() { document.execCommand('copy'); }},
+        link ? {label: rt('menu.copyLink'), run: function() { copyToClipboard('', link.getAttribute('href')); }} : null,
+        pre ? {label: rt('menu.copyCode'), run: function() { copyToClipboard('', codeText(pre)); }} : null,
+        table ? {label: rt('menu.copyTable'), run: function() { var data = tableClipboard(table); if (copyToClipboard(data.html, data.text)) showToast(rt('toast.tableCopied')); }} : null,
+        section ? {label: rt('menu.copySection'), run: function() { var data = sectionClipboard(section); if (copyToClipboard(data.html, data.text)) showToast(rt('toast.sectionCopied')); }} : null,
+        {label: rt('menu.selectAll'), key: 'Ctrl+A', run: function() { var range = document.createRange(); range.selectNodeContents(document.getElementById('content')); var s = window.getSelection(); s.removeAllRanges(); s.addRange(range); }},
         table ? 'separator' : null,
-        table ? {label: 'Filter rows', run: function() { openTableFilter(table); }} : null,
-        table && readerColumnWidths.has(table.readerKey) ? {label: 'Reset column widths', run: function() { resetColumnWidths(table.readerKey); }} : null,
-        anyWidths ? {label: 'Reset all column widths', run: function() { resetColumnWidths(bufferId + '|'); }} : null,
+        table ? {label: rt('ui.filterRows'), run: function() { openTableFilter(table); }} : null,
+        table && readerColumnWidths.has(table.readerKey) ? {label: rt('menu.resetWidths'), run: function() { resetColumnWidths(table.readerKey); }} : null,
+        anyWidths ? {label: rt('menu.resetAllWidths'), run: function() { resetColumnWidths(bufferId + '|'); }} : null,
         'separator',
-        {label: 'Find in preview', key: 'Ctrl+F', run: findInPreview},
-        {label: 'Print / Save as PDF', key: 'Ctrl+P', run: printPreview},
-        {label: document.body.classList.contains('toc-open') ? 'Hide outline' : 'Show outline', run: toggleTocFromMenu}
+        {label: rt('menu.find'), key: 'Ctrl+F', run: findInPreview},
+        {label: rt('menu.print'), key: 'Ctrl+P', run: printPreview},
+        {label: rt(document.body.classList.contains('toc-open') ? 'menu.hideOutline' : 'menu.showOutline'), run: toggleTocFromMenu}
     ];
     return items.filter(Boolean);
 }
@@ -556,15 +556,15 @@ function openTableFilter(table, initial) {
         bar.className = 'reader-table-filter';
         var input = document.createElement('input');
         input.type = 'text'; // the bar has its own close button (a search field would add a second ×)
-        input.placeholder = 'Filter rows';
-        input.setAttribute('aria-label', 'Filter rows');
+        input.placeholder = rt('ui.filterRows');
+        input.setAttribute('aria-label', input.placeholder);
         var count = document.createElement('span');
         count.className = 'reader-table-filter-count';
         var close = document.createElement('button');
         close.type = 'button';
         close.className = 'reader-warning-close';
-        close.title = 'Close filter';
-        close.setAttribute('aria-label', 'Close filter');
+        close.title = rt('ui.closeFilter');
+        close.setAttribute('aria-label', close.title);
         close.textContent = '×';
         var update = function() {
             var result = applyTableFilter(table, input.value);
@@ -642,11 +642,11 @@ function layoutReaderTables(detail) {
             if (cell.querySelector(':scope > .reader-col-grip')) return;
             var grip = document.createElement('span');
             grip.className = 'reader-col-grip';
-            grip.title = 'Drag to resize the column (or arrow keys), double-click to reset';
+            grip.title = rt('ui.resizeColumn');
             grip.tabIndex = 0;
             grip.setAttribute('role', 'separator');
             grip.setAttribute('aria-orientation', 'vertical');
-            grip.setAttribute('aria-label', 'Resize column ' + (column + 1));
+            grip.setAttribute('aria-label', rt('ui.resizeColumnLabel', column + 1));
             grip.addEventListener('pointerdown', function(e) { startColumnResize(e, table, key, column); });
             grip.addEventListener('keydown', function(e) { columnGripKey(e, table, key, column); });
             grip.addEventListener('dblclick', function(e) { e.stopPropagation(); resetColumnWidths(key); });
@@ -700,12 +700,12 @@ function resolveDocumentImages(detail) {
     document.querySelectorAll('#content img[data-local-path]').forEach(function(image) {
         var path = image.getAttribute('data-local-path');
         try { path = decodeURIComponent(path); } catch (e) {}
-        markMissingImage(image, path, 'Images by absolute path are not shown; use a path relative to the document');
+        markMissingImage(image, path, rt('ui.imageAbsolute'));
     });
     document.querySelectorAll('#content img[src]').forEach(function(image) {
         var written = image.getAttribute('src');
         if (/^[a-z]:(?:[\\/]|%5c)/i.test(written)) { // Marked writes "C:\x" as "C:%5Cx"
-            markMissingImage(image, written, 'Images by absolute path are not shown; use a path relative to the document');
+            markMissingImage(image, written, rt('ui.imageAbsolute'));
             image.removeAttribute('src');
             return;
         }
@@ -713,7 +713,7 @@ function resolveDocumentImages(detail) {
         var url = documentRelativeUrl(written, base);
         if (!url) {
             // relative but not servable: an unsaved document has no folder; a path above the folder is refused
-            markMissingImage(image, written, base ? 'Image outside the document folder' : 'Save the document to show its images');
+            markMissingImage(image, written, rt(base ? 'ui.imageOutside' : 'ui.imageUnsaved'));
             image.removeAttribute('src');
             return;
         }
@@ -722,7 +722,7 @@ function resolveDocumentImages(detail) {
         image.addEventListener('error', function() {
             setTimeout(function() {
                 if (!image.isConnected || image.getAttribute('src') !== url) return;
-                image.addEventListener('error', function() { markMissingImage(image, written, 'Image not found'); }, {once: true});
+                image.addEventListener('error', function() { markMissingImage(image, written, rt('ui.imageNotFound')); }, {once: true});
                 image.src = url;
             }, 400);
         }, {once: true});
@@ -739,7 +739,7 @@ function decorateRemoteImages() {
         var button = document.createElement('button');
         button.type = 'button';
         button.className = 'reader-remote-image';
-        button.textContent = 'Show image from ' + (host || 'the internet') + (image.alt ? ': ' + image.alt : '');
+        button.textContent = rt('ui.showImage', host || rt('ui.theInternet')) + (image.alt ? ': ' + image.alt : '');
         button.title = url;
         button.addEventListener('click', function(event) {
             event.stopPropagation();
@@ -784,8 +784,9 @@ function decorateOutline() {
     var input = document.createElement('input');
     input.id = 'toc-filter';
     input.type = 'search';
-    input.placeholder = 'Filter headings';
-    input.setAttribute('aria-label', 'Filter headings');
+    input.placeholder = rt('ui.filterHeadings');
+    input.setAttribute('aria-label', input.placeholder);
+    input.dataset.i18nPlaceholder = input.dataset.i18nAria = 'ui.filterHeadings';
     input.addEventListener('input', applyOutlineFilter);
     input.addEventListener('keydown', function(event) {
         if (event.key === 'Escape' && input.value) { event.preventDefault(); event.stopPropagation(); input.value = ''; applyOutlineFilter(); }
@@ -795,7 +796,8 @@ function decorateOutline() {
     empty.id = 'toc-filter-empty';
     empty.className = 'toc-filter-empty';
     empty.hidden = true;
-    empty.textContent = 'No matching headings';
+    empty.textContent = rt('ui.noMatchingHeadings');
+    empty.dataset.i18n = 'ui.noMatchingHeadings';
     box.append(input);
     var header = drawer.querySelector('.toc-header');
     if (header) header.after(box); else drawer.prepend(box);
@@ -804,10 +806,12 @@ function decorateOutline() {
     var edge = document.createElement('div');
     edge.id = 'toc-resize';
     edge.tabIndex = 0;
-    edge.title = 'Drag to resize the outline (or arrow keys)';
+    edge.title = rt('ui.resizeOutline');
     edge.setAttribute('role', 'separator');
     edge.setAttribute('aria-orientation', 'vertical');
-    edge.setAttribute('aria-label', 'Resize the outline');
+    edge.setAttribute('aria-label', rt('ui.resizeOutlineLabel'));
+    edge.dataset.i18nTitle = 'ui.resizeOutline';
+    edge.dataset.i18nAria = 'ui.resizeOutlineLabel';
     edge.addEventListener('pointerdown', function(event) {
         var start = currentOutlineWidth(), width = start;
         // the drawer sits on the right: dragging its left edge leftwards widens it
@@ -839,7 +843,7 @@ if (window.chrome && window.chrome.webview) {
         if (data && data.type === 'scrollToAnchor' && typeof data.id === 'string') {
             var id = data.id;
             try { id = decodeURIComponent(id); } catch (e) {}
-            if (!scrollToAnchor(id)) showToast('Section not found: #' + id, 5000);
+            if (!scrollToAnchor(id)) showToast(rt('toast.sectionMissing', id), 5000);
         }
         if (data && data.type === 'settings' && Number.isInteger(data.outlineWidthPx)) setOutlineWidth(data.outlineWidthPx, false);
     });

@@ -739,6 +739,14 @@ void TestReaderThemes() {
     assert(WritePrivateProfileStringW(L"Settings", L"ContentMaxWidthPx", L"NaN", iniPath.c_str()));
     loaded.Load(iniPath);
     assert(loaded.contentFontSizePx == 15 && loaded.contentLineHeightPercent == 170 && loaded.contentMaxWidthPx == 860);
+    assert(loaded.readerLanguage == L"auto");
+    config.readerLanguage = L"ru";
+    assert(config.Save(iniPath));
+    loaded.Load(iniPath);
+    assert(loaded.readerLanguage == L"ru");
+    assert(WritePrivateProfileStringW(L"Settings", L"ReaderLanguage", L"de", iniPath.c_str()));
+    loaded.Load(iniPath);
+    assert(loaded.readerLanguage == L"auto"); // an unknown language falls back to following Notepad++
     assert(DeleteFileW(iniPath.c_str()));
     SetLastError(ERROR_SUCCESS);
     assert(!config.Save(L""));

@@ -4,6 +4,7 @@
 #include "ReaderThemes.inc"
 #include "../include/HeadingIds.h"
 #include "../include/LinkPolicy.h"
+#include "../include/ReaderText.h"
 #include <fstream>
 #include <cctype>
 #include <cwctype>
@@ -68,19 +69,19 @@ bool MatchesOriginal(HANDLE original, const std::wstring& path) {
 
 OperationResult WriteHtmlAtomically(const std::wstring& path, std::string_view htmlUtf8) {
     if (path.empty() || path.find(L'\0') != std::wstring::npos)
-        return {OperationStatus::Failed, ERROR_INVALID_PARAMETER, L"Invalid export path."};
+        return {OperationStatus::Failed, ERROR_INVALID_PARAMETER, Tr("export.badPath")};
     DWORD attributes = GetFileAttributesW(path.c_str());
     bool existed = attributes != INVALID_FILE_ATTRIBUTES;
     if (!existed && GetLastError() != ERROR_FILE_NOT_FOUND && GetLastError() != ERROR_PATH_NOT_FOUND)
-        return {OperationStatus::Failed, IoError(), L"Cannot inspect the destination file."};
+        return {OperationStatus::Failed, IoError(), Tr("export.inspectFailed")};
     if (existed && (attributes & FILE_ATTRIBUTE_DIRECTORY))
-        return {OperationStatus::Failed, ERROR_DIRECTORY, L"The destination is a directory."};
+        return {OperationStatus::Failed, ERROR_DIRECTORY, Tr("export.isDirectory")};
     ReadHandle original;
     if (existed) {
         original.value = ::CreateFileW(path.c_str(), GENERIC_READ,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
         if (original.value == INVALID_HANDLE_VALUE)
-            return {OperationStatus::Failed, IoError(), L"Cannot preserve the existing export."};
+            return {OperationStatus::Failed, IoError(), Tr("export.preserveFailed")};
     }
     static std::atomic<unsigned long> counter{0};
     std::wstring temporary;
@@ -93,7 +94,7 @@ OperationResult WriteHtmlAtomically(const std::wstring& path, std::string_view h
         if (output != INVALID_HANDLE_VALUE || GetLastError() != ERROR_FILE_EXISTS) break;
     }
     if (output == INVALID_HANDLE_VALUE)
-        return {OperationStatus::Failed, IoError(), L"Cannot create the temporary export file."};
+        return {OperationStatus::Failed, IoError(), Tr("export.tempFailed")};
     DWORD error = ERROR_SUCCESS;
     size_t position = 0;
     while (position < htmlUtf8.size()) {
@@ -109,19 +110,19 @@ OperationResult WriteHtmlAtomically(const std::wstring& path, std::string_view h
     if (!EXPORT_IO(closeHandle, output) && !error) error = IoError();
     if (error) {
         DeleteFileW(temporary.c_str());
-        return {OperationStatus::Failed, error, L"The export could not be written completely."};
+        return {OperationStatus::Failed, error, Tr("export.writeFailed")};
     }
     if (!existed) {
         if (EXPORT_IO(moveFile, temporary.c_str(), path.c_str(), 0))
             return {OperationStatus::Succeeded};
         error = IoError();
         DeleteFileW(temporary.c_str());
-        return {OperationStatus::Failed, error, L"The new export could not be committed; no existing file was overwritten."};
+        return {OperationStatus::Failed, error, Tr("export.commitFailed")};
     }
     std::wstring backup = temporary + L".bak";
     if (GetFileAttributesW(backup.c_str()) != INVALID_FILE_ATTRIBUTES) {
         DeleteFileW(temporary.c_str());
-        return {OperationStatus::Failed, ERROR_FILE_EXISTS, L"The export backup path is already in use."};
+        return {OperationStatus::Failed, ERROR_FILE_EXISTS, Tr("export.backupInUse")};
     }
     if (EXPORT_IO(replaceFile, path.c_str(), temporary.c_str(), backup.c_str(), 0, nullptr, nullptr)) {
         DeleteFileW(backup.c_str());
@@ -140,8 +141,8 @@ OperationResult WriteHtmlAtomically(const std::wstring& path, std::string_view h
     }
     if (!recovery.empty()) DeleteFileW(temporary.c_str());
     return {OperationStatus::Failed, error,
-        recovery.empty() ? L"Export replacement failed; temporary and backup files were retained for recovery." :
-                           L"Export replacement failed; the original bytes are available at the recovery path.", recovery};
+        recovery.empty() ? Tr("export.replaceRetained") :
+                           Tr("export.replaceRecovery"), recovery};
 }
 
 struct ClipboardMemory {
@@ -506,7 +507,7 @@ std::string HtmlExporter::WrapDocument(const std::string& bodyHtmlUtf8, const st
     html << "</head>\n<body class=\"" << bodyClass << "\">\n";
     html << "<div id=\"reader-wrap\">\n";
     html << "  <main id=\"content\" class=\"doc\" dir=\"auto\">\n";
-    if (!tocHtmlUtf8.empty()) html << "<nav class=\"export-toc\" aria-label=\"Contents\">\n" << tocHtmlUtf8 << "</nav>\n";
+    if (!tocHtmlUtf8.empty()) html << "<nav class=\"export-toc\" aria-label=\"" << WideToUtf8(Tr("ui.contents")) << "\">\n" << tocHtmlUtf8 << "</nav>\n";
     html << bodyHtmlUtf8;
     html << "\n  </main>\n</div>\n";
     html << "</body>\n</html>\n";
@@ -660,17 +661,17 @@ OperationResult HtmlExporter::CopyToClipboard(HWND hwndOwner, const MarkdownDocu
 OperationResult HtmlExporter::CopyFragmentToClipboard(HWND hwndOwner, const std::string& fragmentUtf8, const std::wstring& plain) {
     std::string cfHtml = GenerateCfHtml(fragmentUtf8);
     UINT format = EXPORT_IO(registerFormat, "HTML Format");
-    if (!format) return {OperationStatus::Failed, IoError(), L"Cannot register the HTML clipboard format."};
+    if (!format) return {OperationStatus::Failed, IoError(), Tr("clip.registerFailed")};
     ClipboardMemory htmlMemory, textMemory;
     if (!PrepareClipboardMemory(htmlMemory, cfHtml.c_str(), cfHtml.size() + 1) ||
         !PrepareClipboardMemory(textMemory, plain.c_str(), (plain.size() + 1) * sizeof(wchar_t)))
-        return {OperationStatus::Failed, IoError(), L"Cannot prepare clipboard data; the clipboard was not changed."};
+        return {OperationStatus::Failed, IoError(), Tr("clip.prepareFailed")};
     if (!EXPORT_IO(openClipboard, hwndOwner))
-        return {OperationStatus::Failed, IoError(), L"The clipboard is busy; try copying again."};
+        return {OperationStatus::Failed, IoError(), Tr("clip.busy")};
     if (!EXPORT_IO(emptyClipboard)) {
         DWORD error = IoError();
         EXPORT_IO(closeClipboard);
-        return {OperationStatus::Failed, error, L"Cannot clear the clipboard."};
+        return {OperationStatus::Failed, error, Tr("clip.clearFailed")};
     }
     DWORD error = ERROR_SUCCESS;
     bool htmlCopied = EXPORT_IO(setClipboardData, format, htmlMemory.value) != nullptr;
@@ -682,14 +683,14 @@ OperationResult HtmlExporter::CopyFragmentToClipboard(HWND hwndOwner, const std:
     if (!EXPORT_IO(closeClipboard)) {
         DWORD closeError = IoError();
         return {OperationStatus::Failed, closeError,
-            htmlCopied || textCopied ? L"Clipboard data was transferred, but the clipboard could not be closed." :
-                                       L"Copying failed and the clipboard could not be closed."};
+            htmlCopied || textCopied ? Tr("clip.closeAfterCopy") :
+                                       Tr("clip.closeAfterFail")};
     }
     if (htmlCopied && textCopied) return {OperationStatus::Succeeded};
     if (htmlCopied || textCopied) return {OperationStatus::Partial, error,
-        htmlCopied ? L"HTML was copied, but the plain-text fallback could not be copied." :
-                     L"Plain text was copied, but the formatted HTML could not be copied."};
-    return {OperationStatus::Failed, error, L"Neither clipboard format could be copied."};
+        htmlCopied ? Tr("clip.textMissing") :
+                     Tr("clip.htmlMissing")};
+    return {OperationStatus::Failed, error, Tr("clip.nothing")};
 }
 
 std::string HtmlExporter::GenerateCfHtml(const std::string& htmlFragment) {

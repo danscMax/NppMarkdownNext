@@ -409,6 +409,9 @@ controller_js = r"""
     }
   });
 
+  // The reader's translated text (rt in ReaderThemes.inc); a page without the reader keeps English.
+  function readerText(key, fallback) { return typeof window.rt === 'function' ? window.rt(key) : fallback; }
+
   // Configure marked for GFM
   if (typeof marked !== 'undefined') {
     marked.setOptions({
@@ -474,7 +477,7 @@ controller_js = r"""
   function renderFootnotes() {
     var items = footnotes.order.filter(function(id) { return id in footnotes.notes; }).map(function(id) {
       var safe = escapeHtml(id);
-      return '<li id="fn-' + safe + '">' + footnotes.notes[id] + ' <a href="#fnref-' + safe + '" class="footnote-back" aria-label="Back to the text">↩</a></li>';
+      return '<li id="fn-' + safe + '">' + footnotes.notes[id] + ' <a href="#fnref-' + safe + '" class="footnote-back" aria-label="' + readerText('ui.backToText', 'Back to the text') + '">↩</a></li>';
     });
     return items.length ? '<section class="footnotes" data-source-unmapped="true"><hr><ol>' + items.join('') + '</ol></section>\n' : '';
   }
@@ -776,7 +779,7 @@ controller_js = r"""
 
       var mdText = data.markdown || '';
       if (!mdText.trim()) {
-        contentEl.innerHTML = '<div style="color:var(--muted);text-align:center;padding:60px 20px;"><em>(No content to preview)</em></div>';
+        contentEl.innerHTML = '<div style="color:var(--muted);text-align:center;padding:60px 20px;"><em>' + readerText('ui.noContent', '(No content to preview)') + '</em></div>';
         finalizeDocument(data, 'empty', sequence);
         return;
       }
@@ -867,7 +870,7 @@ controller_js = r"""
       }
       if (contentEl) {
         contentEl.innerHTML = '<div style="color:var(--danger);padding:24px;border:1px solid var(--danger);border-radius:8px;background:var(--code-bg);">' +
-                              '<h3 style="margin-top:0;">Preview Error</h3>' +
+                              '<h3 style="margin-top:0;">' + readerText('ui.previewError', 'Preview Error') + '</h3>' +
                               '<p>' + escapeHtml(err ? err.message : 'Error') + '</p>' +
                               '</div>';
         finalizeDocument(data, 'error', sequence);

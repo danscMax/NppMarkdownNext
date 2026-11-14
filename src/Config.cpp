@@ -89,6 +89,9 @@ void PluginConfig::Load(const std::wstring& configPath) {
     contentFontSizePx = ReadingChoice(ReadStrictInt(sec, L"ContentFontSizePx", 15, configPath), kFontSizePresets, 15);
     contentLineHeightPercent = ReadingChoice(ReadStrictInt(sec, L"ContentLineHeightPercent", 170, configPath), kLineHeightPresets, 170);
     contentMaxWidthPx = ReadingChoice(ReadStrictInt(sec, L"ContentMaxWidthPx", 860, configPath), kReadingWidthPresets, 860);
+    wchar_t language[8] = {};
+    GetPrivateProfileStringW(sec, L"ReaderLanguage", L"auto", language, 8, configPath.c_str());
+    readerLanguage = (std::wstring(language) == L"en" || std::wstring(language) == L"ru") ? language : L"auto";
     outlineWidthPx = std::clamp(ReadStrictInt(sec, L"OutlineWidthPx", kOutlineWidthDefault, configPath), kOutlineWidthMin, kOutlineWidthMax);
 
     wchar_t buf[512] = { 0 };
@@ -100,7 +103,7 @@ void PluginConfig::Load(const std::wstring& configPath) {
     m_persistedPath = configPath;
     for (const wchar_t* key : {L"IsPanelVisible", L"AutoShowPanel", L"SyncWithCaret", L"ShowOutline", L"DarkModeOverride",
                                L"IsSmartBiDiEnabled", L"Theme", L"BeardedVariant", L"ZoomLevelPercent", L"SupportedExtensions",
-                               L"ContentFontSizePx", L"ContentLineHeightPercent", L"ContentMaxWidthPx", L"OutlineWidthPx"}) {
+                               L"ContentFontSizePx", L"ContentLineHeightPercent", L"ContentMaxWidthPx", L"OutlineWidthPx", L"ReaderLanguage"}) {
         wchar_t raw[512] = {};
         const wchar_t* absent = L"\x1f<absent>";
         GetPrivateProfileStringW(sec, key, absent, raw, 512, configPath.c_str());
@@ -147,6 +150,7 @@ bool PluginConfig::Save(const std::wstring& configPath) const {
     write(L"ContentLineHeightPercent", std::to_wstring(contentLineHeightPercent));
     write(L"ContentMaxWidthPx", std::to_wstring(contentMaxWidthPx));
     write(L"OutlineWidthPx", std::to_wstring(outlineWidthPx));
+    write(L"ReaderLanguage", readerLanguage);
     if (firstError != ERROR_SUCCESS) {
         SetLastError(firstError);
         return false;

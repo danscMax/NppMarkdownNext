@@ -5,6 +5,7 @@
 #include "../include/NppLog.h"
 #include "../include/ThemeCatalog.h"
 #include "../include/LinkPolicy.h"
+#include "../include/ReaderText.h"
 #include "../include/Version.h"
 #include "../include/ReaderPresets.inc"
 #include <optional>
@@ -133,6 +134,7 @@ void NppMarkdownNext::Init(HINSTANCE hInst, NppData nppData) {
         MoveFileExW(legacyTables.c_str(), m_documentStatePath.c_str(), 0);
     m_config.Load(m_configPath);
     m_restorePanelOnStartup = m_config.isPanelVisible;
+    ApplyReaderLanguage(); // before getFuncsArray names the menu items
     m_config.isPanelVisible = false;
     m_isPanelVisible = false;
 }
@@ -233,7 +235,7 @@ bool NppMarkdownNext::CreatePanelWindow() {
 
     m_hViewerStatus = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | SS_CENTER, 16, 24, 300, 64,
         m_hPanel, nullptr, m_hInst, nullptr);
-    m_hRetryViewer = CreateWindowExW(0, L"BUTTON", L"Retry preview", WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+    m_hRetryViewer = CreateWindowExW(0, L"BUTTON", Tr("status.retry").c_str(), WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
         16, 96, 120, 30, m_hPanel, reinterpret_cast<HMENU>(IDC_RETRY_VIEWER), m_hInst, nullptr);
     UpdateStatusFont();
 
@@ -372,15 +374,14 @@ bool NppMarkdownNext::InitializeViewer() {
 #ifdef NPP_READER_TESTING
     if (m_testInitializeViewer) return m_testInitializeViewer();
 #endif
-    SetViewerStatus(L"Loading Markdown preview...", false);
+    SetViewerStatus(Tr("status.loading"), false);
     // Retry stays disabled while loading; a start that never reports back must not leave it disabled forever.
     SetTimer(m_hPanel, IDT_VIEWER_LOADING, VIEWER_LOADING_TIMEOUT_MS, nullptr);
     m_webViewViewer.SetVisible(false);
     const std::wstring userDataDir = GetViewerDataDirectory();
     if (userDataDir.empty()) {
         const DWORD error = GetLastError();
-        SetViewerStatus(L"The preview needs a writable temporary folder, but Windows did not report one (error " + std::to_wstring(error) +
-                        L"). Check that the TEMP environment variable points to an existing folder, then click Retry.", true);
+        SetViewerStatus(Tr("status.noTemp", std::to_wstring(error)), true);
         return false;
     }
     bool started = m_webViewViewer.Initialize(m_hPanel, userDataDir);
@@ -396,7 +397,7 @@ void NppMarkdownNext::HandleViewerRecovery(bool manual) {
     if (m_testClock) now = m_testClock();
 #endif
     if (!manual && m_hasRecoveryAttempt && now - m_lastRecoveryTick < 30000) {
-        SetViewerStatus(L"Preview could not be loaded. Check WebView2 Runtime and retry.", true);
+        SetViewerStatus(Tr("status.loadFailed"), true);
         return;
     }
     m_hasRecoveryAttempt = true;
@@ -448,6 +449,28 @@ std::wstring NppMarkdownNext::GetCurrentBufferPath() const {
     wchar_t path[MAX_PATH] = { 0 };
     SendMessage(m_nppData._nppHandle, NPPM_GETFULLCURRENTPATH, MAX_PATH, (LPARAM)path);
     return path;
+}
+
+// The plugin's text follows its setting, or with "auto" the language Notepad++ itself is shown in.
+void NppMarkdownNext::ApplyReaderLanguage() {
+    char file[64] = {};
+    if (m_nppData._nppHandle) SendMessage(m_nppData._nppHandle, NPPM_GETNATIVELANGFILENAME, sizeof(file), reinterpret_cast<LPARAM>(file));
+    m_nativeLanguageRussian = _strnicmp(file, "russian", 7) == 0;
+    ReaderTextRussian() = m_config.readerLanguage == L"ru" || (m_config.readerLanguage == L"auto" && m_nativeLanguageRussian);
+    // A later change also renames the Plugins menu items Notepad++ already shows, keeping their shortcut text.
+    HMENU menu = m_nppData._nppHandle ? reinterpret_cast<HMENU>(SendMessage(m_nppData._nppHandle, NPPM_GETMENUHANDLE, NPPPLUGINMENU, 0)) : nullptr;
+    for (int i = 0; menu && i < NB_PLUGIN_COMMANDS; ++i) {
+        wchar_t current[256] = {};
+        MENUITEMINFOW info{sizeof(info), MIIM_STRING};
+        info.dwTypeData = current;
+        info.cch = static_cast<UINT>(std::size(current));
+        if (!GetMenuItemInfoW(menu, GetPluginCmdId(i), FALSE, &info)) continue;
+        const wchar_t* tab = wcschr(current, L'\t');
+        std::wstring text = Tr(kPluginMenuKeys[i]) + (tab ? tab : L"");
+        info.dwTypeData = text.data();
+        SetMenuItemInfoW(menu, GetPluginCmdId(i), FALSE, &info);
+    }
+    if (menu) DrawMenuBar(m_nppData._nppHandle);
 }
 
 // The folder of the document on screen, empty for an unsaved tab. A drive root keeps its separator ("C:\"):
@@ -586,7 +609,7 @@ void NppMarkdownNext::SyncUiState() {
     m_webViewViewer.SyncUiState(m_config);
     if (m_settingsSaveWarningActive && !m_settingsWarningReported && m_webViewViewer.IsPageReady()) {
         m_webViewViewer.ReportOperationResult(L"saveSettings", {OperationStatus::Failed, m_settingsSaveError,
-            L"Settings apply to this session, but could not be saved. Check the configuration file permissions."});
+            Tr("save.settingsFailed")});
         m_settingsWarningReported = true;
     }
 }
@@ -601,14 +624,14 @@ bool NppMarkdownNext::SaveConfig(bool notifyUser) {
         m_settingsSaveError = error;
         if (notifyUser && firstFailure && m_webViewViewer.IsPageReady()) {
             m_webViewViewer.ReportOperationResult(L"saveSettings", {OperationStatus::Failed, error,
-                L"Settings apply to this session, but could not be saved. Check the configuration file permissions."});
+                Tr("save.settingsFailed")});
             m_settingsWarningReported = true;
         }
     } else if (m_settingsSaveWarningActive) {
         m_settingsSaveWarningActive = false;
         m_settingsWarningReported = false;
         m_settingsSaveError = ERROR_SUCCESS;
-        if (notifyUser) m_webViewViewer.ReportOperationResult(L"saveSettings", {OperationStatus::Succeeded, ERROR_SUCCESS, L"Settings saved."});
+        if (notifyUser) m_webViewViewer.ReportOperationResult(L"saveSettings", {OperationStatus::Succeeded, ERROR_SUCCESS, Tr("save.settingsSaved")});
     }
     return saved;
 }
@@ -644,7 +667,7 @@ void NppMarkdownNext::OnSettingsMessage(const std::wstring& message) {
                 const size_t length = digits.empty() || digits.size() > 9 || digits.find_first_not_of(L"0123456789") != std::wstring::npos
                                           ? std::wstring::npos : std::stoul(digits);
                 if (length == std::wstring::npos || length > rest.size() - lengthEnd - 1) {
-                    ReportExportResult(operation, {OperationStatus::Failed, ERROR_INVALID_DATA, L"The preview sent incomplete export content."}, id);
+                    ReportExportResult(operation, {OperationStatus::Failed, ERROR_INVALID_DATA, Tr("export.incomplete")}, id);
                     return;
                 }
                 content.present = true;
@@ -652,7 +675,7 @@ void NppMarkdownNext::OnSettingsMessage(const std::wstring& message) {
                 content.text = rest.substr(lengthEnd + 1 + length);
             }
             if (!id.empty() && IsRequestIdValid(id)) QueueExport(operation, id, std::move(content));
-            else ReportExportResult(operation, {OperationStatus::Failed, ERROR_INVALID_PARAMETER, L"Invalid export request identifier."}, id);
+            else ReportExportResult(operation, {OperationStatus::Failed, ERROR_INVALID_PARAMETER, Tr("export.badId")}, id);
             return;
         }
     }
@@ -682,6 +705,10 @@ void NppMarkdownNext::OnSettingsMessage(const std::wstring& message) {
         m_config.contentLineHeightPercent = *value;
     } else if (auto value = ReadingMessageValue(message, L"readingWidth:", kReadingWidthPresets)) {
         m_config.contentMaxWidthPx = *value;
+    } else if (message == L"readerLanguage:auto" || message == L"readerLanguage:en" || message == L"readerLanguage:ru") {
+        m_config.readerLanguage = message.substr(15);
+        ApplyReaderLanguage();
+        RequestRenderDebounced(true); // rebuilds the document's own controls (grips, buttons, image notes) in the new language
     } else if (message.starts_with(L"outlineWidth:")) {
         const std::wstring raw = message.substr(13);
         if (raw.empty() || raw.size() > 4 || raw.find_first_not_of(L"0123456789") != std::wstring::npos) return;
@@ -705,7 +732,7 @@ void NppMarkdownNext::OnSettingsMessage(const std::wstring& message) {
 void NppMarkdownNext::QueueExport(const std::wstring& operation, const std::wstring& requestId, ExportContent content) {
     if (m_shuttingDown) return;
     if (m_exportInProgress || m_exportQueued) {
-        ReportExportResult(operation, {OperationStatus::Failed, ERROR_BUSY, L"Another HTML operation is already in progress."}, requestId);
+        ReportExportResult(operation, {OperationStatus::Failed, ERROR_BUSY, Tr("export.busy")}, requestId);
         return;
     }
     m_exportQueued = true;
@@ -718,7 +745,7 @@ void NppMarkdownNext::QueueExport(const std::wstring& operation, const std::wstr
         m_queuedExportOperation.clear();
         m_queuedExportRequestId.clear();
         m_queuedExportContent = {};
-        ReportExportResult(operation, {OperationStatus::Failed, error, L"The HTML operation could not be started."}, requestId);
+        ReportExportResult(operation, {OperationStatus::Failed, error, Tr("export.notStarted")}, requestId);
     }
 }
 
@@ -737,7 +764,7 @@ void NppMarkdownNext::ShowExportWarning(const std::wstring& message) {
 #ifdef NPP_READER_TESTING
     if (m_testExportWarning) { m_testExportWarning(message); return; }
 #endif
-    MessageBoxW(m_nppData._nppHandle, message.c_str(), L"Markdown HTML export", MB_OK | MB_ICONWARNING);
+    MessageBoxW(m_nppData._nppHandle, message.c_str(), Tr("export.warningTitle").c_str(), MB_OK | MB_ICONWARNING);
 }
 
 void NppMarkdownNext::ReportExportResult(const std::wstring& operation, const OperationResult& result, const std::wstring& requestId) {
@@ -745,11 +772,12 @@ void NppMarkdownNext::ReportExportResult(const std::wstring& operation, const Op
     if ((result.status != OperationStatus::Failed && result.status != OperationStatus::Partial) ||
         (!requestId.empty() && delivered && m_isPanelVisible && !m_viewerStatusVisible)) return;
 
-    std::wstring message = operation == L"copyHtml" ? L"Copy HTML" : L"Save HTML";
-    message += result.status == OperationStatus::Partial ? L" completed partially.\n\n" : L" failed.\n\n";
+    const bool partial = result.status == OperationStatus::Partial;
+    std::wstring message = Tr(operation == L"copyHtml" ? (partial ? "export.copyPartial" : "export.copyFailed")
+                                                       : (partial ? "export.savePartial" : "export.saveFailed")) + L"\n\n";
     message += result.detail;
-    if (result.error) message += L"\n\nError code: " + std::to_wstring(result.error);
-    if (!result.recoveryPath.empty()) message += L"\n\nRecovery file: " + result.recoveryPath;
+    if (result.error) message += L"\n\n" + Tr("export.errorCode", std::to_wstring(result.error));
+    if (!result.recoveryPath.empty()) message += L"\n\n" + Tr("export.recoveryFile", result.recoveryPath);
     if (!m_hPanel || !IsWindow(m_hPanel)) {
         ShowExportWarning(message);
     } else {
@@ -774,14 +802,14 @@ void NppMarkdownNext::RequestHtmlExport(const std::wstring& operation) {
 void NppMarkdownNext::CopyRenderedHtml(const std::wstring& requestId, const ExportContent& content) {
     if (m_shuttingDown) return;
     if (!IsRequestIdValid(requestId) || m_exportInProgress || m_exportQueued) {
-        ReportExportResult(L"copyHtml", {OperationStatus::Failed, ERROR_BUSY, L"Another HTML operation is already in progress."}, requestId);
+        ReportExportResult(L"copyHtml", {OperationStatus::Failed, ERROR_BUSY, Tr("export.busy")}, requestId);
         return;
     }
     m_exportInProgress = true;
     ExportScope scope{[this]() { FinishExport(); }};
     HWND hSci = GetCurrentScintilla();
     if (!hSci) {
-        ReportExportResult(L"copyHtml", {OperationStatus::Failed, ERROR_INVALID_HANDLE, L"There is no active document to copy."}, requestId);
+        ReportExportResult(L"copyHtml", {OperationStatus::Failed, ERROR_INVALID_HANDLE, Tr("export.noDocCopy")}, requestId);
         return;
     }
     const HWND owner = m_hPanel ? m_hPanel : m_nppData._nppHandle;
@@ -806,14 +834,14 @@ void NppMarkdownNext::CopyRenderedHtml(const std::wstring& requestId, const Expo
 void NppMarkdownNext::SaveAsHtml(const std::wstring& requestId, const ExportContent& content) {
     if (m_shuttingDown) return;
     if (!IsRequestIdValid(requestId) || m_exportInProgress || m_exportQueued) {
-        ReportExportResult(L"saveAsHtml", {OperationStatus::Failed, ERROR_BUSY, L"Another HTML operation is already in progress."}, requestId);
+        ReportExportResult(L"saveAsHtml", {OperationStatus::Failed, ERROR_BUSY, Tr("export.busy")}, requestId);
         return;
     }
     m_exportInProgress = true;
     ExportScope scope{[this]() { FinishExport(); }};
     HWND hSci = GetCurrentScintilla();
     if (!hSci) {
-        ReportExportResult(L"saveAsHtml", {OperationStatus::Failed, ERROR_INVALID_HANDLE, L"There is no active document to export."}, requestId);
+        ReportExportResult(L"saveAsHtml", {OperationStatus::Failed, ERROR_INVALID_HANDLE, Tr("export.noDocSave")}, requestId);
         return;
     }
     std::string textUtf8 = GetScintillaText(hSci);
@@ -851,28 +879,12 @@ void NppMarkdownNext::SaveAsHtml(const std::wstring& requestId, const ExportCont
         DWORD error = CommDlgExtendedError();
         ReportExportResult(L"saveAsHtml", {
             error ? OperationStatus::Failed : OperationStatus::Cancelled, error,
-            error ? L"The Save HTML dialog could not be opened." : L""}, requestId);
+            error ? Tr("export.dialogFailed") : L""}, requestId);
     }
 }
 
 void NppMarkdownNext::ShowAbout() {
-    const wchar_t* aboutMsg =
-        L"NppMarkdownNext (Kelk Reader Edition)\n"
-        L"Version " NPPMD_VERSION_WSTRING L" (x64 / x86 / ARM64)\n\n"
-        L"Ultra-lightweight native Markdown live reader panel for Notepad++ based on Kelk.\n\n"
-        L"Features:\n"
-        L"  • Pure Kelk Markdown Reader Core (GFM Tables, Task Lists, Code Blocks)\n"
-        L"  • Kelk BiDiCore & BidiView: Flawless Right-to-Left (Persian, Arabic, Urdu, Hebrew)\n"
-        L"  • System Font Rendering (Vazirmatn / Sahel / Segoe UI)\n"
-        L"  • Native Chromium WebView2 with zero bloat (300 KB reader shell)\n"
-        L"  • Light / Dark mode sync with Notepad++\n"
-        L"  • Interactive Task Checkboxes & Caret Sync\n"
-        L"  • Double-click to jump to editor line\n"
-        L"  • 100% Offline with zero external dependencies\n\n"
-        L"Based on Kelk (https://github.com/mohsen-1984/kelk)\n"
-        L"Licensed under the MIT License";
-
-    MessageBox(m_nppData._nppHandle, aboutMsg, L"About Markdown Reader", MB_OK | MB_ICONINFORMATION);
+    MessageBoxW(m_nppData._nppHandle, Tr("about.text", NPPMD_VERSION_WSTRING).c_str(), Tr("about.title").c_str(), MB_OK | MB_ICONINFORMATION);
 }
 
 void NppMarkdownNext::RequestRenderDebounced(bool force) {
@@ -959,7 +971,7 @@ void NppMarkdownNext::StoreDocumentState(DocumentState kind, const std::wstring&
         NppLog("StoreDocumentState: write failed error=%lu", error);
         if (m_webViewViewer.IsPageReady())
             m_webViewViewer.ReportOperationResult(L"saveSettings", {OperationStatus::Failed, error,
-                L"Reader state for this document applies to this session, but could not be saved. Check the configuration folder permissions."});
+                Tr("save.stateFailed")});
     }
 }
 
@@ -1014,7 +1026,7 @@ void NppMarkdownNext::OpenLink(const std::wstring& href) {
         target = path;
     } else if (!scheme.empty()) {
         // another scheme (tel:, ftp:, app protocols) is not opened from a document
-        m_webViewViewer.PostNotice(L"This kind of link is not opened from the preview: " + href);
+        m_webViewViewer.PostNotice(Tr("link.scheme", href));
         return;
     } else {
         target = href.substr(0, href.find_first_of(L"#?"));
@@ -1029,7 +1041,7 @@ void NppMarkdownNext::OpenLink(const std::wstring& href) {
     if (PathIsRelativeW(target.c_str())) {
         const std::wstring folder = GetCurrentDocumentFolder();
         if (folder.empty()) {
-            m_webViewViewer.PostNotice(L"Save the document first: relative links are resolved from its folder.");
+            m_webViewViewer.PostNotice(Tr("link.saveFirst"));
             return;
         }
         target = folder + (folder.back() == L'\\' ? L"" : L"\\") + target;
@@ -1044,7 +1056,7 @@ void NppMarkdownNext::OpenLink(const std::wstring& href) {
     // shortcut: the check is textual, so a local junction/symlink that points at a share is still followed;
     // that needs a link planted in the user's own folder; resolve reparse points first if that ever matters.
     if (full.starts_with(L"\\\\") && !IsOnSameShare(full, GetCurrentBufferPath())) {
-        m_webViewViewer.PostNotice(L"Links to network locations and device paths are not opened from the preview: " + full);
+        m_webViewViewer.PostNotice(Tr("link.network", full));
         return;
     }
     std::wstring extension = PathFindExtensionW(full.c_str());
@@ -1052,12 +1064,12 @@ void NppMarkdownNext::OpenLink(const std::wstring& href) {
     // Shell links redirect to anything (a program, a share): never followed from a document.
     static constexpr const wchar_t* kShellLinks[] = {L".lnk", L".url", L".pif", L".scf", L".library-ms", L".searchconnector-ms"};
     if (std::any_of(std::begin(kShellLinks), std::end(kShellLinks), [&](const wchar_t* known) { return extension == known; })) {
-        m_webViewViewer.PostNotice(L"Shortcut files are not opened from the preview: " + full);
+        m_webViewViewer.PostNotice(Tr("link.shortcut", full));
         return;
     }
     const DWORD attributes = GetFileAttributesW(full.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES) {
-        m_webViewViewer.PostNotice(L"The linked file was not found: " + full);
+        m_webViewViewer.PostNotice(Tr("link.notFound", full));
         return;
     }
     if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
@@ -1121,7 +1133,7 @@ void NppMarkdownNext::HandleCheckboxToggle(const CheckboxRequest& request) {
     auto reject = [this]() { RequestRenderDebounced(true); };
     HWND hSci = GetCurrentScintilla();
     if (hSci && SendMessage(hSci, SCI_GETREADONLY, 0, 0)) {
-        m_webViewViewer.PostNotice(L"This file is read-only in Notepad++, so the task was not changed.");
+        m_webViewViewer.PostNotice(Tr("task.readOnly"));
         reject();
         return;
     }
@@ -1279,7 +1291,7 @@ LRESULT CALLBACK NppMarkdownNext::PanelWndProc(HWND hwnd, UINT msg, WPARAM wPara
                 // still the loading status (Retry disabled): an error shown meanwhile keeps its own text
                 if (!self->m_shuttingDown && self->m_viewerStatusVisible && !self->m_webViewViewer.IsPageReady() &&
                     !IsWindowEnabled(self->m_hRetryViewer))
-                    self->SetViewerStatus(L"The preview is taking longer than usual to start. Click Retry to restart it.", true);
+                    self->SetViewerStatus(Tr("status.slow"), true);
                 return 0;
             }
             break;

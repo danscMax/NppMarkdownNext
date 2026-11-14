@@ -49,8 +49,8 @@ data = {'type': 'render', 'title': 'Preview smoke test', 'markdown': markdown, '
 bridge = '''<script>
 window.__initialRender=DATA;
 window.__listeners=[]; window.__messages=[];
-window.__state={type:'settings',sync:true,bidi:true,autoShow:true,outline:false,darkMode:-1,zoomPercent:115,fontSizePx:15,lineHeightPercent:170,maxWidthPx:860,outlineWidthPx:280,themeId:'bearded-v-gold-d-raynh',darkModeApplicable:false};
-window.__emit=function(data){window.__listeners.forEach(function(fn){fn({data:data});});};
+window.__state={type:'settings',sync:true,bidi:true,autoShow:true,outline:false,darkMode:-1,zoomPercent:115,fontSizePx:15,lineHeightPercent:170,maxWidthPx:860,outlineWidthPx:280,language:'en',languageSetting:'auto',themeId:'bearded-v-gold-d-raynh',darkModeApplicable:false};
+window.__emit=function(data){if(data&&data.type==='render')window.__lastRender=data;window.__listeners.forEach(function(fn){fn({data:data});});};
 window.chrome={webview:{addEventListener:function(type,fn){window.__listeners.push(fn);},postMessage:function(message){
  window.__messages.push(message);
  if(message==='pageLoaded') queueMicrotask(function(){window.__emit(window.__initialRender);window.__emit(window.__state);});
@@ -72,6 +72,11 @@ window.chrome={webview:{addEventListener:function(type,fn){window.__listeners.pu
  if(message.indexOf('readingLineHeight:')===0) {var n=Number(message.slice(18));if(window.READER_SETTINGS.presets.lineHeightPercent.includes(n))window.__state.lineHeightPercent=n;}
  if(message.indexOf('readingWidth:')===0) {var n=Number(message.slice(13));if(window.READER_SETTINGS.presets.maxWidthPx.includes(n))window.__state.maxWidthPx=n;}
  if(message.indexOf('outlineWidth:')===0) window.__state.outlineWidthPx=Number(message.slice(13));
+ if(/^readerLanguage:(auto|en|ru)$/.test(message)) {
+  window.__state.languageSetting=message.slice(15);window.__state.language=window.__state.languageSetting==='ru'?'ru':'en';
+  var current=window.READER_THEME_CATALOG.find(function(theme){return theme.id===window.__state.themeId;})||{};
+  setTimeout(function(){window.__emit(Object.assign({},window.__lastRender,{themeId:window.__state.themeId,isDark:!!current.isDark}));},0);
+ }
  if(message==='zoomIn') window.__state.zoomPercent+=10;
  if(message==='zoomOut') window.__state.zoomPercent-=10;
  if(message==='zoomReset') window.__state.zoomPercent=100;

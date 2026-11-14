@@ -29,7 +29,7 @@ async () => {
         finishAnimations();
     }
     settings();
-    expect(document.querySelectorAll('#theme-pop-list .theme-pop-item').length === 11, 'All ten legacy settings and Typography are present');
+    expect(document.querySelectorAll('#theme-pop-list .theme-pop-item').length === 12, 'All ten legacy settings, Typography and Language are present');
     expect(document.getElementById('theme-fab').getAttribute('aria-expanded') === 'true', 'Gear opens the settings menu');
     const originalText = document.getElementById('content').textContent;
     const options = [...THEME_LIST, ...window.BEARDED_VARIANTS];
@@ -447,10 +447,38 @@ async () => {
             }
         }
     } finally { frame.remove(); }
+    // Language: the setting switches the reader's own text (static, menu, re-rendered controls); never the document.
+    const ru = window.READER_STRINGS.ru, en = window.READER_STRINGS.en;
+    window.__emit({type:'render',markdown:'# Заголовок\n\n```js\nx\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n',bufferId:'31',caretLine:-1,renderRevision:'lang1',title:'Lang',isDark:true,isBiDi:true,themeId:window._themeId});
+    await new Promise(requestAnimationFrame); finishAnimations();
+    settings();
+    expect(row(en['set.language'].replace('{0}', en['set.languageAuto'])), 'Language row shows the Auto setting');
+    row(en['set.language'].split('{0}')[0]).click(); finishAnimations();
+    expect(document.querySelector('#theme-popover .theme-pop-title').textContent === en['set.languageTitle'], 'Language submenu has its title');
+    expect(['As Notepad++', 'English', 'Русский'].every(label => row(label)), 'Language submenu offers Auto, English and Russian');
+    row('Русский').click();
+    await new Promise(resolve => setTimeout(resolve, 30)); await new Promise(requestAnimationFrame); finishAnimations();
+    expect(window.__messages.includes('readerLanguage:ru'), 'Choosing Russian tells the host');
+    expect(document.documentElement.dataset.uiLanguage === 'ru', 'The host switches the reader to Russian');
+    expect(document.getElementById('toc-fab').title === ru['ui.outlineButton'] && document.querySelector('.toc-title').textContent === ru['ui.outlineTitle']
+        && document.getElementById('theme-fab').getAttribute('aria-label') === ru['ui.settingsButton'], 'Fixed controls switch to Russian');
+    expect(document.getElementById('toc-filter').placeholder === ru['ui.filterHeadings'] && document.getElementById('toc-resize').title === ru['ui.resizeOutline'], 'Outline controls switch to Russian');
+    expect(document.querySelector('#content .reader-copy-code').title === ru['ui.copyCode'], 'Re-rendered code buttons are in Russian');
+    expect(document.querySelector('#content .reader-col-grip').getAttribute('aria-label') === ru['ui.resizeColumnLabel'].replace('{0}', '1'), 'Column grips are in Russian');
+    expect(document.querySelector('#content h1').textContent.includes('Заголовок') && document.querySelector('#content code').textContent.trim() === 'x', 'The document text itself is unchanged');
+    settings();
+    expect(document.querySelector('#theme-popover .theme-pop-title').textContent === ru['set.title'] && row(ru['set.language'].replace('{0}', 'Русский')) && row(ru['set.sync']), 'Settings menu is in Russian');
+    row(ru['set.theme'].split('{0}')[0]).click(); finishAnimations();
+    expect(row(ru['theme.follow']) && row(ru['theme.light']), 'Built-in theme names are translated');
+    settings(); row(ru['set.language'].split('{0}')[0]).click(); finishAnimations();
+    row(ru['set.languageAuto']).click();
+    await new Promise(resolve => setTimeout(resolve, 30)); await new Promise(requestAnimationFrame); finishAnimations();
+    expect(document.documentElement.dataset.uiLanguage === 'en' && document.getElementById('toc-fab').title === en['ui.outlineButton'], 'Auto returns to the host language');
+    closeThemePopover();
     window.__state.sync = true; window.__emit(window.__state);
     selectTheme('bearded-v-gold-d-raynh');
     window.__emit({type: 'render', markdown: '', themeId: window._themeId, isDark: true, isBiDi: true});
     finishAnimations();
     expect(document.getElementById('content').textContent.includes('No content to preview'), 'An empty document clears the old preview');
-    return {checks: checks.length, themes: options.length, settings: 11, gold, passed: true};
+    return {checks: checks.length, themes: options.length, settings: 12, gold, passed: true};
 }

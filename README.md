@@ -14,7 +14,7 @@ NppMarkdownNext is an ultra-lightweight native Markdown reader and live preview 
   - Images with paths relative to the document's folder; links to other local files open in Notepad++ (documents and images in their default app).
   - Formulas and Mermaid diagrams are shown as their source text.
 - **Real-Time Caret & Editor Synchronization**: Moving the editor caret scrolls the reader to the matching line. Double-clicking any element in the preview jumps the editor caret straight to the source line.
-- **Preview Themes & Settings**: The animated gear menu provides Follow Notepad++, Light, Dark, Sepia, Monokai, Dracula, Solarized, Nord, GitHub, VS Code Dark, and all 64 Bearded variants, including hover previews. It also controls caret sync, outline, BiDi, auto-show, zoom, HTML copy/export, and dark mode. Open it from the preview or **Plugins > NppMarkdownNext > Settings...**. Existing settings are preserved.
+- **Preview Themes & Settings**: The animated gear menu provides Follow Notepad++, Light, Dark, Sepia, Monokai, Dracula, Solarized, Nord, GitHub, VS Code Dark, and all 64 Bearded variants, including hover previews. It also controls caret sync, outline, BiDi, auto-show, zoom, HTML copy/export, dark mode, and the language of the plugin's own text (English or Russian; by default the language Notepad++ is shown in). Open it from the preview or **Plugins > NppMarkdownNext > Settings...**. Existing settings are preserved.
 - **Zero Network Dependencies**: 100% offline, private, and secure. Zero external font downloads or CDN tracking requests.
 - **Export & Clipboard**: 1-click "Save As HTML" (named after the document, with a contents list for longer documents) and "Copy Rendered HTML" to clipboard.
 - **Reader tools**: right-click menu (copy, copy link, copy code, copy table as HTML + tab-separated text, select all, find, print / save as PDF, outline), a copy button on code blocks and an outline button next to the settings button.
@@ -98,6 +98,9 @@ DarkModeOverride=-1
 
 ; Zoom factor percentage (30 to 300)
 ZoomLevelPercent=100
+
+; Language of the plugin's menus and messages: auto (as Notepad++), en or ru
+ReaderLanguage=auto
 
 ; Comma-separated list of file extensions that trigger auto-render
 SupportedExtensions=.md,.markdown,.mdown,.mkd,.rst

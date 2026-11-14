@@ -2,6 +2,7 @@
 #include "../include/Resource.h"
 #include "../include/BiDiEngine.h"
 #include "../include/Scintilla.h"
+#include "../include/ReaderText.h"
 #include <cassert>
 #include <cstring>
 #include <iostream>
@@ -729,6 +730,25 @@ struct ReaderLifecycleTestPeer {
         assert(fixture.editor.writes == 1 && fixture.editor.text == "- [x] Task\n");
     }
 
+    static void ReaderLanguageFollowsSetting() {
+        Fixture fixture;
+        fixture.Ready();
+        fixture.host.OnSettingsMessage(L"readerLanguage:ru");
+        assert(fixture.host.m_config.readerLanguage == L"ru" && ReaderTextRussian());
+        assert(fixture.Count(L"\"language\":\"ru\",\"languageSetting\":\"ru\"") >= 1);
+        assert(Tr("status.retry") != L"Retry preview");
+        assert(Tr("link.notFound", L"x.md").find(L"x.md") != std::wstring::npos);
+        assert(Tr("no.such.key") == L"no.such.key");
+        for (const char* key : kPluginMenuKeys) assert(Tr(key) != std::wstring(key, key + std::strlen(key)));
+        fixture.host.OnSettingsMessage(L"readerLanguage:de");
+        assert(fixture.host.m_config.readerLanguage == L"ru");
+        fixture.host.OnSettingsMessage(L"readerLanguage:auto");
+        // the test host has no Notepad++ window to report a language, so Auto means English here
+        assert(fixture.host.m_config.readerLanguage == L"auto" && !ReaderTextRussian());
+        assert(fixture.Count(L"\"language\":\"en\",\"languageSetting\":\"auto\"") >= 1);
+        assert(Tr("status.retry") == L"Retry preview");
+    }
+
     static void ReadingSettingsAndPalettePriority() {
         Fixture fixture;
         fixture.Ready();
@@ -772,6 +792,7 @@ int main(int argc, char** argv) {
         {"CheckboxProtocolIsStrict", Peer::CheckboxProtocolIsStrict},
         {"CheckboxChangesOnlyVerifiedMarker", Peer::CheckboxChangesOnlyVerifiedMarker},
         {"CheckboxRejectsStaleBufferRevisionAndContent", Peer::CheckboxRejectsStaleBufferRevisionAndContent},
+        {"ReaderLanguageFollowsSetting", Peer::ReaderLanguageFollowsSetting},
         {"ReadingSettingsAndPalettePriority", Peer::ReadingSettingsAndPalettePriority}
     };
     const char* selected = argc == 3 && std::strcmp(argv[1], "--case") == 0 ? argv[2] : nullptr;
