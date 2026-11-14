@@ -1,6 +1,7 @@
 #include "../include/WebView2Viewer.h"
 #include "../include/BiDiEngine.h"
 #include "../include/NppLog.h"
+#include "../include/LinkPolicy.h"
 #include "../include/Config.h"
 #include "KelkBundle.inc"
 #include "ReaderThemes.inc"
@@ -606,7 +607,10 @@ public:
 
 template <class T> void ReleaseCom(T*& pointer) { if (pointer) { pointer->Release(); pointer = nullptr; } }
 
-constexpr const wchar_t* kDocumentHost = L"npp-reader-document.local";
+}
+
+void WebView2Viewer::ScrollToAnchor(const std::wstring& fragment) {
+    PostJson(L"{\"type\":\"scrollToAnchor\",\"id\":\"" + EscapeJsonString(fragment) + L"\"}");
 }
 
 void WebView2Viewer::PostNotice(const std::wstring& text) {

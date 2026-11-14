@@ -294,17 +294,46 @@ function sectionOf(target) {
     }
     return {heading: node, nodes: nodes};
 }
-function sectionClipboard(section) {
-    var holder = document.createElement('div');
-    section.nodes.forEach(function(node) { holder.appendChild(cleanReaderClone(node)); });
-    // innerText needs layout: measure the clean copy off-screen, styled like the document
-    var probe = holder.cloneNode(true);
+// Plain text of clean content with line breaks where blocks end: innerText needs layout, so it is measured on an
+// off-screen copy styled like the document.
+function renderedText(node) {
+    var probe = node.cloneNode(true);
     probe.className = 'doc';
+    probe.removeAttribute('id');
     probe.style.cssText = 'position:fixed;left:-100000px;top:0;width:800px';
     document.body.appendChild(probe);
     var text = probe.innerText.trim();
     probe.remove();
-    return {html: holder.innerHTML, text: text};
+    return text;
+}
+function sectionClipboard(section) {
+    var holder = document.createElement('div');
+    section.nodes.forEach(function(node) { holder.appendChild(cleanReaderClone(node)); });
+    return {html: holder.innerHTML, text: renderedText(holder)};
+}
+
+// ---- Export what the reader shows ------------------------------------------------------------------------
+// Save/Copy HTML send the rendered body (one renderer for screen and file) and its plain text; the host wraps it
+// in the theme's page, embeds the document's own pictures and writes the file or the clipboard.
+function exportPayload() {
+    var body = cleanReaderClone(document.getElementById('content'));
+    var text = renderedText(body); // before the contents list, so headings are not listed twice
+    var headings = window.readerDocumentIndex ? window.readerDocumentIndex.headings : [];
+    if (headings.length >= 3) { // the same rule as the native exporter: longer documents get a contents list
+        var nav = document.createElement('nav');
+        nav.className = 'export-toc';
+        nav.setAttribute('aria-label', 'Contents');
+        headings.forEach(function(heading) {
+            var link = document.createElement('a');
+            link.className = 'toc-item toc-l' + heading.level;
+            link.href = '#' + heading.id;
+            link.textContent = heading.text;
+            nav.appendChild(link);
+        });
+        body.prepend(nav);
+    }
+    var html = body.innerHTML;
+    return '\n' + html.length + '\n' + html + text;
 }
 document.addEventListener('click', function(event) {
     if (event.button !== 0 || event.defaultPrevented) return;
@@ -807,6 +836,11 @@ if (window.chrome && window.chrome.webview) {
         var data = event.data;
         if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { return; } }
         if (data && data.type === 'notice' && typeof data.text === 'string') showToast(data.text, 6000);
+        if (data && data.type === 'scrollToAnchor' && typeof data.id === 'string') {
+            var id = data.id;
+            try { id = decodeURIComponent(id); } catch (e) {}
+            if (!scrollToAnchor(id)) showToast('Section not found: #' + id, 5000);
+        }
         if (data && data.type === 'settings' && Number.isInteger(data.outlineWidthPx)) setOutlineWidth(data.outlineWidthPx, false);
     });
 }

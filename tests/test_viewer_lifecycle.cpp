@@ -454,8 +454,20 @@ struct ReaderLifecycleTestPeer {
         assert(file != INVALID_HANDLE_VALUE);
         CloseHandle(file);
         fixture.editor.path = folder + L"\\doc.md";
-        fixture.host.OnSettingsMessage(L"openLink:plan.md#section");
+        fixture.host.SetPanelVisible(true);
+        fixture.host.OnSettingsMessage(L"openLink:plan.md#%D1%80%D0%B8%D1%81%D0%BA%D0%B8");
         assert(fixture.editor.lastOpened == plan);
+        // the opened document scrolls to the section once it is rendered (Notepad++ activates it)
+        fixture.messages.clear();
+        fixture.editor.path = plan;
+        fixture.host.OnBufferActivated();
+        fixture.Tick();
+        assert(fixture.Count(L"\"type\":\"scrollToAnchor\"") == 1 && fixture.Count(L"\"id\":\"%D1%80%D0%B8%D1%81%D0%BA%D0%B8\"") == 1);
+        // a section link into the document already on screen scrolls at once
+        fixture.messages.clear();
+        fixture.host.OnSettingsMessage(L"openLink:plan.md#next");
+        assert(fixture.Count(L"\"id\":\"next\"") == 1);
+        fixture.editor.path = folder + L"\\doc.md";
         fixture.editor.lastOpened.clear();
         fixture.messages.clear();
         fixture.host.OnSettingsMessage(L"openLink:\\\\attacker.example\\share\\x.md");

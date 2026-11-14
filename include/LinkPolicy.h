@@ -18,6 +18,10 @@ inline std::wstring LinkScheme(const std::wstring& href) {
     return scheme;
 }
 
+// The virtual host the reader loads the document's own folder through (pictures by relative path).
+inline constexpr const wchar_t* kDocumentHost = L"npp-reader-document.local";
+inline constexpr const char* kDocumentHostUrlUtf8 = "https://npp-reader-document.local/";
+
 // Links a shared HTML file may keep: relative paths and anchors, web and mail.
 inline bool IsSafeLinkScheme(const std::wstring& scheme) {
     return scheme.empty() || scheme == L"http" || scheme == L"https" || scheme == L"mailto";

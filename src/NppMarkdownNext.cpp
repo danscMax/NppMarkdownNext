@@ -174,6 +174,7 @@ void NppMarkdownNext::Cleanup() {
     m_exportQueued = false;
     m_queuedExportOperation.clear();
     m_queuedExportRequestId.clear();
+    m_queuedExportContent = {};
     m_pendingExportWarnings.clear();
     ++m_viewerGeneration;
     if (m_hPanel) { KillTimer(m_hPanel, IDT_RENDER_DEBOUNCE); KillTimer(m_hPanel, IDT_VIEWER_LOADING); }
@@ -449,6 +450,14 @@ std::wstring NppMarkdownNext::GetCurrentBufferPath() const {
     return path;
 }
 
+// The folder of the document on screen, empty for an unsaved tab. A drive root keeps its separator ("C:\"):
+// "C:" alone would mean that drive's current directory.
+std::wstring NppMarkdownNext::GetCurrentDocumentFolder() const {
+    const std::wstring path = GetCurrentBufferPath();
+    const size_t end = path.find_last_of(L'\\');
+    return end == std::wstring::npos ? L"" : path.substr(0, end == 2 ? 3 : end);
+}
+
 bool NppMarkdownNext::IsCurrentBufferMarkdown() const {
     std::wstring path = GetCurrentBufferPath();
     if (path.empty() || path.find(L'\\') == std::wstring::npos) return true; // Unsaved tab like "new 1"
@@ -624,8 +633,25 @@ void NppMarkdownNext::OnSettingsMessage(const std::wstring& message) {
     for (const auto* operation : {L"copyHtml", L"saveAsHtml"}) {
         const std::wstring prefix = std::wstring(operation) + L":";
         if (message.starts_with(prefix)) {
-            std::wstring id = message.substr(prefix.size());
-            if (!id.empty() && IsRequestIdValid(id)) QueueExport(operation, id);
+            // "<op>:<id>" or, from the reader, "<op>:<id>\n<html length>\n<html><plain text>" (what it shows)
+            const std::wstring rest = message.substr(prefix.size());
+            const size_t idEnd = rest.find(L'\n');
+            std::wstring id = rest.substr(0, idEnd);
+            ExportContent content;
+            if (idEnd != std::wstring::npos) {
+                const size_t lengthEnd = rest.find(L'\n', idEnd + 1);
+                const std::wstring digits = lengthEnd == std::wstring::npos ? L"" : rest.substr(idEnd + 1, lengthEnd - idEnd - 1);
+                const size_t length = digits.empty() || digits.size() > 9 || digits.find_first_not_of(L"0123456789") != std::wstring::npos
+                                          ? std::wstring::npos : std::stoul(digits);
+                if (length == std::wstring::npos || length > rest.size() - lengthEnd - 1) {
+                    ReportExportResult(operation, {OperationStatus::Failed, ERROR_INVALID_DATA, L"The preview sent incomplete export content."}, id);
+                    return;
+                }
+                content.present = true;
+                content.htmlUtf8 = BiDiEngine::WideToUtf8(rest.substr(lengthEnd + 1, length));
+                content.text = rest.substr(lengthEnd + 1 + length);
+            }
+            if (!id.empty() && IsRequestIdValid(id)) QueueExport(operation, id, std::move(content));
             else ReportExportResult(operation, {OperationStatus::Failed, ERROR_INVALID_PARAMETER, L"Invalid export request identifier."}, id);
             return;
         }
@@ -676,7 +702,7 @@ void NppMarkdownNext::OnSettingsMessage(const std::wstring& message) {
     SyncUiState();
 }
 
-void NppMarkdownNext::QueueExport(const std::wstring& operation, const std::wstring& requestId) {
+void NppMarkdownNext::QueueExport(const std::wstring& operation, const std::wstring& requestId, ExportContent content) {
     if (m_shuttingDown) return;
     if (m_exportInProgress || m_exportQueued) {
         ReportExportResult(operation, {OperationStatus::Failed, ERROR_BUSY, L"Another HTML operation is already in progress."}, requestId);
@@ -685,11 +711,13 @@ void NppMarkdownNext::QueueExport(const std::wstring& operation, const std::wstr
     m_exportQueued = true;
     m_queuedExportOperation = operation;
     m_queuedExportRequestId = requestId;
+    m_queuedExportContent = std::move(content);
     if (!PostMessage(m_hPanel, WM_APP_EXPORT_REQUEST, 0, 0)) {
         DWORD error = GetLastError();
         m_exportQueued = false;
         m_queuedExportOperation.clear();
         m_queuedExportRequestId.clear();
+        m_queuedExportContent = {};
         ReportExportResult(operation, {OperationStatus::Failed, error, L"The HTML operation could not be started."}, requestId);
     }
 }
@@ -733,7 +761,17 @@ void NppMarkdownNext::ReportExportResult(const std::wstring& operation, const Op
     }
 }
 
-void NppMarkdownNext::CopyRenderedHtml(const std::wstring& requestId) {
+// Menu commands: the reader exports what it shows (same renderer); without a ready preview, the native parser.
+void NppMarkdownNext::RequestHtmlExport(const std::wstring& operation) {
+    if (m_isPanelVisible && m_webViewViewer.IsPageReady()) {
+        m_webViewViewer.ExecuteScript(operation == L"copyHtml" ? L"copyHtmlFromMenu();" : L"saveAsHtmlFromMenu();");
+        return;
+    }
+    if (operation == L"copyHtml") CopyRenderedHtml();
+    else SaveAsHtml();
+}
+
+void NppMarkdownNext::CopyRenderedHtml(const std::wstring& requestId, const ExportContent& content) {
     if (m_shuttingDown) return;
     if (!IsRequestIdValid(requestId) || m_exportInProgress || m_exportQueued) {
         ReportExportResult(L"copyHtml", {OperationStatus::Failed, ERROR_BUSY, L"Another HTML operation is already in progress."}, requestId);
@@ -744,6 +782,12 @@ void NppMarkdownNext::CopyRenderedHtml(const std::wstring& requestId) {
     HWND hSci = GetCurrentScintilla();
     if (!hSci) {
         ReportExportResult(L"copyHtml", {OperationStatus::Failed, ERROR_INVALID_HANDLE, L"There is no active document to copy."}, requestId);
+        return;
+    }
+    const HWND owner = m_hPanel ? m_hPanel : m_nppData._nppHandle;
+    if (content.present) {
+        const std::string body = HtmlExporter::EmbedDocumentImages(content.htmlUtf8, GetCurrentDocumentFolder());
+        ReportExportResult(L"copyHtml", HtmlExporter::CopyRenderedToClipboard(owner, body, content.text), requestId);
         return;
     }
     std::string textUtf8 = GetScintillaText(hSci);
@@ -759,7 +803,7 @@ void NppMarkdownNext::CopyRenderedHtml(const std::wstring& requestId) {
     ReportExportResult(L"copyHtml", result, requestId);
 }
 
-void NppMarkdownNext::SaveAsHtml(const std::wstring& requestId) {
+void NppMarkdownNext::SaveAsHtml(const std::wstring& requestId, const ExportContent& content) {
     if (m_shuttingDown) return;
     if (!IsRequestIdValid(requestId) || m_exportInProgress || m_exportQueued) {
         ReportExportResult(L"saveAsHtml", {OperationStatus::Failed, ERROR_BUSY, L"Another HTML operation is already in progress."}, requestId);
@@ -794,10 +838,14 @@ void NppMarkdownNext::SaveAsHtml(const std::wstring& requestId) {
     ofn.lpstrDefExt = L"html";
 
     if (GetSaveFileNameW(&ofn)) {
-        OperationResult result = HtmlExporter::SaveToFile(fileName, doc, L"Markdown Export",
-                                 m_config.theme == ReaderTheme::FollowNpp ?
-                                     (IsDarkThemeEffective() ? ReaderTheme::Dark : ReaderTheme::Light) : m_config.theme,
-                                 m_config.beardedVariant);
+        const ReaderTheme exportTheme = m_config.theme == ReaderTheme::FollowNpp ?
+                                            (IsDarkThemeEffective() ? ReaderTheme::Dark : ReaderTheme::Light) : m_config.theme;
+        std::wstring title = PathFindFileNameW(GetCurrentBufferPath().c_str());
+        if (title.empty()) title = L"Markdown Export";
+        OperationResult result = content.present
+            ? HtmlExporter::SaveRenderedToFile(fileName, HtmlExporter::EmbedDocumentImages(content.htmlUtf8, GetCurrentDocumentFolder()),
+                                               title, exportTheme, m_config.beardedVariant)
+            : HtmlExporter::SaveToFile(fileName, doc, title, exportTheme, m_config.beardedVariant);
         ReportExportResult(L"saveAsHtml", result, requestId);
     } else {
         DWORD error = CommDlgExtendedError();
@@ -871,16 +919,19 @@ bool NppMarkdownNext::ExecuteRender(bool force) {
 
     bool isDark = IsDarkThemeEffective();
     const std::wstring bufferId = std::to_wstring(GetCurrentBufferId());
-    const size_t folderEnd = currentPath.find_last_of(L'\\');
-    // keep the separator of a drive root: "C:" alone would mean that drive's current directory
-    m_webViewViewer.SetDocumentFolder(folderEnd == std::wstring::npos ? L"" : currentPath.substr(0, folderEnd == 2 ? 3 : folderEnd));
+    const std::wstring folder = GetCurrentDocumentFolder();
+    m_webViewViewer.SetDocumentFolder(folder);
     // Forced renders (tab switch, panel shown, page reload) refresh the saved widths; typing renders keep the reader's copy.
-    if (force && folderEnd != std::wstring::npos) {
+    if (force && !folder.empty()) {
         for (const DocumentState kind : {DocumentState::TableWidths, DocumentState::ReadingPosition})
             m_webViewViewer.SetDocumentState(Spec(kind).message, bufferId, LoadDocumentState(kind, currentPath));
     }
 
     if (m_webViewViewer.UpdateMarkdown(utf8Content, docTitle, isDark, m_config.isSmartBiDiEnabled, caretLine, bufferId)) {
+        if (!m_pendingAnchor.empty() && CompareStringOrdinal(m_pendingAnchorPath.c_str(), -1, currentPath.c_str(), -1, TRUE) == CSTR_EQUAL) {
+            m_webViewViewer.ScrollToAnchor(std::exchange(m_pendingAnchor, {}));
+            m_pendingAnchorPath.clear();
+        }
         m_lastRawContentUtf8 = utf8Content;
         m_lastRenderedSourceRevision = sourceRevision;
         return true;
@@ -954,7 +1005,7 @@ void NppMarkdownNext::OpenLink(const std::wstring& href) {
         ShellExecuteW(nullptr, L"open", href.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         return;
     }
-    std::wstring target;
+    std::wstring target, fragment; // fragment: "plan.md#risks" scrolls the opened document to that section
     if (scheme == L"file") {
         std::wstring path(4096, L'\0');
         DWORD length = static_cast<DWORD>(path.size());
@@ -967,6 +1018,8 @@ void NppMarkdownNext::OpenLink(const std::wstring& href) {
         return;
     } else {
         target = href.substr(0, href.find_first_of(L"#?"));
+        const size_t hash = href.find(L'#');
+        if (hash != std::wstring::npos && href.size() - hash - 1 <= 256) fragment = href.substr(hash + 1);
         if (target.empty()) return;
         DWORD length = static_cast<DWORD>(target.size() + 1);
         UrlUnescapeW(target.data(), nullptr, &length, URL_UNESCAPE_INPLACE | URL_UNESCAPE_AS_UTF8);
@@ -974,13 +1027,12 @@ void NppMarkdownNext::OpenLink(const std::wstring& href) {
         std::replace(target.begin(), target.end(), L'/', L'\\');
     }
     if (PathIsRelativeW(target.c_str())) {
-        const std::wstring document = GetCurrentBufferPath();
-        const size_t folderEnd = document.find_last_of(L'\\');
-        if (folderEnd == std::wstring::npos) {
+        const std::wstring folder = GetCurrentDocumentFolder();
+        if (folder.empty()) {
             m_webViewViewer.PostNotice(L"Save the document first: relative links are resolved from its folder.");
             return;
         }
-        target = document.substr(0, folderEnd + 1) + target;
+        target = folder + (folder.back() == L'\\' ? L"" : L"\\") + target;
     }
     std::wstring full(32768, L'\0');
     const DWORD fullLength = GetFullPathNameW(target.c_str(), static_cast<DWORD>(full.size()), full.data(), nullptr);
@@ -1019,8 +1071,14 @@ void NppMarkdownNext::OpenLink(const std::wstring& href) {
         L".docx", L".xlsx", L".pptx", L".odt", L".ods", L".odp"};
     if (std::any_of(std::begin(kDefaultApp), std::end(kDefaultApp), [&](const wchar_t* known) { return extension == known; }))
         ShellExecuteW(nullptr, L"open", full.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-    else
+    else {
+        const bool alreadyShown = CompareStringOrdinal(full.c_str(), -1, GetCurrentBufferPath().c_str(), -1, TRUE) == CSTR_EQUAL;
         SendMessage(m_nppData._nppHandle, NPPM_DOOPEN, 0, reinterpret_cast<LPARAM>(full.c_str()));
+        if (fragment.empty()) return;
+        // the document on screen scrolls now; another one once its first render is posted (ExecuteRender)
+        if (alreadyShown) m_webViewViewer.ScrollToAnchor(fragment);
+        else { m_pendingAnchorPath = full; m_pendingAnchor = fragment; }
+    }
 }
 
 // The loading/error surface follows the editor's own colors and the monitor's DPI.
@@ -1246,9 +1304,10 @@ LRESULT CALLBACK NppMarkdownNext::PanelWndProc(HWND hwnd, UINT msg, WPARAM wPara
             if (!self->m_shuttingDown && self->m_exportQueued) {
                 std::wstring operation = std::move(self->m_queuedExportOperation);
                 std::wstring requestId = std::move(self->m_queuedExportRequestId);
+                ExportContent content = std::exchange(self->m_queuedExportContent, {});
                 self->m_exportQueued = false;
-                if (operation == L"copyHtml") self->CopyRenderedHtml(requestId);
-                else if (operation == L"saveAsHtml") self->SaveAsHtml(requestId);
+                if (operation == L"copyHtml") self->CopyRenderedHtml(requestId, content);
+                else if (operation == L"saveAsHtml") self->SaveAsHtml(requestId, content);
             }
             return 0;
 

@@ -342,6 +342,27 @@ void TestHtmlExporter() {
         assert(shared.find(L">bad<") == std::wstring::npos && shared.find(L"bad") != std::wstring::npos);
     }
 
+    // Export of the reader's rendered body: document pictures embedded, unsafe paths kept relative, no scripts
+    {
+        wchar_t temp[MAX_PATH] = {}, folder[MAX_PATH] = {};
+        assert(GetTempPathW(MAX_PATH, temp) && GetTempFileNameW(temp, L"Npe", 0, folder) && DeleteFileW(folder) && CreateDirectoryW(folder, nullptr));
+        const std::wstring picture = std::wstring(folder) + L"\\" + L"\x0434\x043e\x0442 a.png"; // "дот a.png"
+        HANDLE file = CreateFileW(picture.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, 0, nullptr);
+        DWORD written = 0;
+        assert(file != INVALID_HANDLE_VALUE && WriteFile(file, "PNGDATA", 7, &written, nullptr) && written == 7);
+        CloseHandle(file);
+        const std::string body = std::string("<p><img src=\"") + kDocumentHostUrlUtf8 + "%D0%B4%D0%BE%D1%82%20a.png\" alt=\"x\">"
+            "<img src=\"" + kDocumentHostUrlUtf8 + "..%2Fsecret.png\"><img src=\"" + kDocumentHostUrlUtf8 + "missing.png\"></p>";
+        const std::string embedded = HtmlExporter::EmbedDocumentImages(body, folder);
+        assert(embedded.find("src=\"data:image/png;base64,UE5HREFUQQ==\"") != std::string::npos);
+        assert(embedded.find("src=\"../secret.png\"") != std::string::npos && embedded.find("src=\"missing.png\"") != std::string::npos);
+        assert(embedded.find(kDocumentHostUrlUtf8) == std::string::npos);
+        const std::string page = HtmlExporter::WrapDocument(embedded, "", L"T", PreviewTheme::Light, 0, L"", false);
+        assert(page.find("<script") == std::string::npos && page.find("UE5HREFUQQ==") != std::string::npos);
+        DeleteFileW(picture.c_str());
+        RemoveDirectoryW(folder);
+    }
+
     // Nested lists stay nested, ordered lists keep their first number, long documents get a contents list
     {
         std::wstring lists = HtmlExporter::ExportToHtml(MarkdownParser::Parse(

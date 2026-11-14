@@ -46,11 +46,11 @@ void CommandZoomReset() {
 }
 
 void CommandCopyHtml() {
-    NppMarkdownNext::Instance().CopyRenderedHtml();
+    NppMarkdownNext::Instance().RequestHtmlExport(L"copyHtml");
 }
 
 void CommandSaveHtml() {
-    NppMarkdownNext::Instance().SaveAsHtml();
+    NppMarkdownNext::Instance().RequestHtmlExport(L"saveAsHtml");
 }
 
 void CommandAbout() {

@@ -79,7 +79,7 @@ async () => {
     expect(window._darkMode === -1, 'Dark mode can follow Notepad++ again');
     function resultFor(command, status, detail = '') {
         const operation = command.startsWith('copyHtml:') ? 'copyHtml' : 'saveAsHtml';
-        window.__emit({type:'operationResult',operation,status,detail,error:status==='failed'?5:0,recoveryPath:'',requestId:command.slice(operation.length+1)});
+        window.__emit({type:'operationResult',operation,status,detail,error:status==='failed'?5:0,recoveryPath:'',requestId:command.split(String.fromCharCode(10))[0].slice(operation.length+1)});
     }
     settings(); row('Copy HTML').click();
     const copy = window.__messages.findLast(message => message.startsWith('copyHtml:'));
@@ -208,6 +208,20 @@ async () => {
     await render('![chart](img/chart.png)\n\n![abs](C:\\tmp\\x.png)\n\n![up](../x.png)\n', '37');
     const notes = [...content.querySelectorAll('.reader-image-missing')].map(note => note.textContent);
     expect(notes.length === 3 && notes[0].includes('Save the document') && notes[1].includes('absolute path') && notes[2].includes('Save the document'), 'Pictures that cannot be shown say which file and why ' + JSON.stringify(notes));
+
+    // Save/Copy HTML send what the reader shows: clean body, contents list for 3+ headings, then the plain text
+    await render('# One\n\n## Two\n\n## Three\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n![net](https://example.com/n.png)\n\nText[^1]\n\n[^1]: Note\n', '38');
+    const payload = exportPayload();
+    const lengthEnd = payload.indexOf('\n', 1), htmlLength = Number(payload.slice(1, lengthEnd));
+    const exportedHtml = payload.slice(lengthEnd + 1, lengthEnd + 1 + htmlLength), exportedText = payload.slice(lengthEnd + 1 + htmlLength);
+    expect(payload.charAt(0) === '\n' && exportedHtml.startsWith('<nav class="export-toc"') && exportedHtml.includes('class="footnotes"'), 'The export body is the rendered document with a contents list and footnotes');
+    expect(!/reader-col-grip|reader-table-wrap|data-line|reader-remote-image|reader-copy-code/.test(exportedHtml) && exportedHtml.includes('src="https://example.com/n.png"'), 'The export body carries no reader decorations and keeps remote picture addresses');
+    expect(exportedText.startsWith('One') && exportedText.split('Two').length === 2 && exportedText.includes('Note'), 'The export plain text follows the document (headings once)');
+    window.__messages.length = 0;
+    settings(); row('Copy HTML').click();
+    const copyMessage = window.__messages.find(message => message.startsWith('copyHtml:'));
+    expect(copyMessage && copyMessage.indexOf('\n') > 0 && copyMessage.includes('export-toc'), 'Copy HTML sends the rendered content with its request');
+    resultFor(copyMessage.split('\n')[0], 'succeeded');
 
     // Shortcuts follow the typed letter, and the physical key only where the layout types no Latin letter
     expect(shortcutLetter({key: 'а', code: 'KeyF'}, 'f') && shortcutLetter({key: 'f', code: 'KeyY'}, 'f') && !shortcutLetter({key: 'u', code: 'KeyF'}, 'f') && !shortcutLetter({key: 'l', code: 'KeyP'}, 'p'), 'Ctrl+F/Ctrl+P work on Russian, Dvorak and AZERTY layouts');

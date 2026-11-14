@@ -752,7 +752,9 @@ function beginHtmlOperation(operation) {
     // Generous, because Save HTML waits for the user in the file dialog.
     var request = pendingExport;
     request.timer = setTimeout(function() { if (pendingExport === request) { pendingExport = null; refreshThemePopover(); } }, 10 * 60 * 1000);
-    window.chrome.webview.postMessage(operation + ':' + pendingExport.requestId);
+    // With a rendered document, the export is what the reader shows (exportPayload); otherwise the host's parser.
+    var rendered = window.readerDocumentIndex && window.readerDocumentIndex.state === 'ready' && typeof exportPayload === 'function';
+    window.chrome.webview.postMessage(operation + ':' + pendingExport.requestId + (rendered ? exportPayload() : ''));
     refreshThemePopover();
     return true;
 }

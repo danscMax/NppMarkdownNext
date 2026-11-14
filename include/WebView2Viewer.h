@@ -56,6 +56,7 @@ public:
     void SetDocumentState(const std::wstring& kind, const std::wstring& bufferId, const std::wstring& value);
     void SetDocumentFolder(const std::wstring& folder);
     void PostNotice(const std::wstring& text);
+    void ScrollToAnchor(const std::wstring& fragment);
     bool StartFind(const std::wstring& term);
     bool ShowPrintDialog();
     const std::wstring& RenderedBufferId() const { return m_renderedBufferId; }

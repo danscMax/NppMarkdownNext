@@ -5,6 +5,8 @@
 #include "../include/HeadingIds.h"
 #include "../include/LinkPolicy.h"
 #include <fstream>
+#include <cctype>
+#include <cwctype>
 #include <sstream>
 #include <algorithm>
 #include <array>
@@ -474,6 +476,16 @@ PreviewComponents HtmlExporter::GeneratePreviewComponents(
     std::string bodyHtmlUtf8 = WideToUtf8(bodyStream.str());
     std::string tocHtmlUtf8 = WideToUtf8(tocStream.str());
 
+    // A shared file has no reader outline drawer: longer documents get their contents list on top.
+    const std::string fullHtml = WrapDocument(bodyHtmlUtf8, tocEntries >= 3 ? tocHtmlUtf8 : std::string(), title, theme, darkModeOverride, beardedVariant, true);
+    return PreviewComponents{ fullHtml, bodyHtmlUtf8, tocHtmlUtf8 };
+}
+
+// The document around a rendered body: theme styles, the page structure, optionally the contents list and the
+// reader's scripts (highlighting and BiDi run on open). A body taken from the live preview is already highlighted
+// and laid out, so it is shared without scripts.
+std::string HtmlExporter::WrapDocument(const std::string& bodyHtmlUtf8, const std::string& tocHtmlUtf8, const std::wstring& title,
+                                       PreviewTheme theme, int darkModeOverride, const std::wstring& beardedVariant, bool includeScripts) {
     bool isDark = (theme == PreviewTheme::Dark) || (darkModeOverride == 1);
     std::string bodyClass = isDark ? "dark" : "";
     PluginConfig themeConfig;
@@ -490,17 +502,106 @@ PreviewComponents HtmlExporter::GeneratePreviewComponents(
     html << "<title>" << WideToUtf8(title) << "</title>\n";
     html << "<style>\n" << s_kelkCss << "\n" << s_readerPaletteCss << "\n" << s_readerThemeCss
          << "\n" << s_readerSemanticCss << "\n</style>\n";
-    html << "<script>\n" << s_kelkScripts << "\n</script>\n";
+    if (includeScripts) html << "<script>\n" << s_kelkScripts << "\n</script>\n";
     html << "</head>\n<body class=\"" << bodyClass << "\">\n";
     html << "<div id=\"reader-wrap\">\n";
     html << "  <main id=\"content\" class=\"doc\" dir=\"auto\">\n";
-    // A shared file has no reader outline drawer: longer documents get their contents list on top.
-    if (tocEntries >= 3) html << "<nav class=\"export-toc\" aria-label=\"Contents\">\n" << tocHtmlUtf8 << "</nav>\n";
+    if (!tocHtmlUtf8.empty()) html << "<nav class=\"export-toc\" aria-label=\"Contents\">\n" << tocHtmlUtf8 << "</nav>\n";
     html << bodyHtmlUtf8;
     html << "\n  </main>\n</div>\n";
     html << "</body>\n</html>\n";
+    return html.str();
+}
 
-    return PreviewComponents{ html.str(), bodyHtmlUtf8, tocHtmlUtf8 };
+namespace {
+std::string Base64(const std::string& bytes) {
+    static constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((bytes.size() + 2) / 3 * 4);
+    for (size_t i = 0; i < bytes.size(); i += 3) {
+        const unsigned value = (static_cast<unsigned char>(bytes[i]) << 16) |
+                               (i + 1 < bytes.size() ? static_cast<unsigned char>(bytes[i + 1]) << 8 : 0) |
+                               (i + 2 < bytes.size() ? static_cast<unsigned char>(bytes[i + 2]) : 0);
+        out += alphabet[(value >> 18) & 63];
+        out += alphabet[(value >> 12) & 63];
+        out += i + 1 < bytes.size() ? alphabet[(value >> 6) & 63] : '=';
+        out += i + 2 < bytes.size() ? alphabet[value & 63] : '=';
+    }
+    return out;
+}
+
+// "%D0%BF%20x&amp;y" -> UTF-8 bytes "п x&y" (an attribute value as innerHTML serializes it, percent-encoded by the reader)
+std::string DecodeAttributeUrl(const std::string& value) {
+    std::string unescaped;
+    for (size_t i = 0; i < value.size(); ++i) {
+        if (value.compare(i, 5, "&amp;") == 0) { unescaped += '&'; i += 4; }
+        else if (value[i] == '%' && i + 2 < value.size() && isxdigit(static_cast<unsigned char>(value[i + 1])) && isxdigit(static_cast<unsigned char>(value[i + 2]))) {
+            unescaped += static_cast<char>(std::stoi(value.substr(i + 1, 2), nullptr, 16));
+            i += 2;
+        } else unescaped += value[i];
+    }
+    return unescaped;
+}
+
+const char* ImageMimeType(std::wstring extension) {
+    for (auto& c : extension) c = static_cast<wchar_t>(towlower(c));
+    if (extension == L".png") return "image/png";
+    if (extension == L".jpg" || extension == L".jpeg") return "image/jpeg";
+    if (extension == L".gif") return "image/gif";
+    if (extension == L".webp") return "image/webp";
+    if (extension == L".bmp") return "image/bmp";
+    if (extension == L".svg") return "image/svg+xml"; // shown through <img>: its scripts never run
+    if (extension == L".ico") return "image/x-icon";
+    return nullptr;
+}
+}
+
+// Pictures the reader loaded from the document's folder (its virtual host) become data: URIs, so a shared file
+// keeps them; one that cannot be read (missing, too large, unknown type) keeps its path relative to the document.
+// The path comes from the reader's message, so it is checked again here: no "..", no drive, no stream, no device.
+std::string HtmlExporter::EmbedDocumentImages(const std::string& htmlUtf8, const std::wstring& folder) {
+    const std::string marker = std::string("src=\"") + kDocumentHostUrlUtf8;
+    std::string out;
+    size_t position = 0;
+    for (size_t at; (at = htmlUtf8.find(marker, position)) != std::string::npos;) {
+        const size_t start = at + marker.size(), end = htmlUtf8.find('"', start);
+        if (end == std::string::npos) break;
+        out.append(htmlUtf8, position, at - position);
+        const std::string relative = DecodeAttributeUrl(htmlUtf8.substr(start, end - start));
+        std::wstring path = BiDiEngine::Utf8ToWide(relative);
+        std::replace(path.begin(), path.end(), L'/', L'\\');
+        std::string replacement = EscapeHtmlUtf8(relative);
+        const bool safe = !folder.empty() && !path.empty() && path.find(L"..") == std::wstring::npos &&
+                          path.find_first_of(L":*?\"<>|") == std::wstring::npos && path.front() != L'\\';
+        const size_t dot = path.find_last_of(L'.'), slash = path.find_last_of(L'\\');
+        const std::wstring extension = dot == std::wstring::npos || (slash != std::wstring::npos && dot < slash) ? L"" : path.substr(dot);
+        const char* mime = safe ? ImageMimeType(extension) : nullptr;
+        if (mime) {
+            const std::wstring file = folder + L"\\" + path;
+            HANDLE handle = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            LARGE_INTEGER size = {};
+            if (handle != INVALID_HANDLE_VALUE && GetFileSizeEx(handle, &size) && size.QuadPart > 0 && size.QuadPart <= 8 * 1024 * 1024) {
+                std::string bytes(static_cast<size_t>(size.QuadPart), '\0');
+                DWORD read = 0;
+                if (ReadFile(handle, bytes.data(), static_cast<DWORD>(bytes.size()), &read, nullptr) && read == bytes.size())
+                    replacement = std::string("data:") + mime + ";base64," + Base64(bytes);
+            }
+            if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+        }
+        out += "src=\"" + replacement + "\"";
+        position = end + 1;
+    }
+    out.append(htmlUtf8, position, std::string::npos);
+    return out;
+}
+
+OperationResult HtmlExporter::SaveRenderedToFile(const std::wstring& filePath, const std::string& bodyHtmlUtf8, const std::wstring& title,
+                                                 PreviewTheme theme, const std::wstring& beardedVariant) {
+    return WriteHtmlAtomically(filePath, WrapDocument(bodyHtmlUtf8, std::string(), title, theme, 0, beardedVariant, false));
+}
+
+OperationResult HtmlExporter::CopyRenderedToClipboard(HWND hwndOwner, const std::string& fragmentUtf8, const std::wstring& plainText) {
+    return CopyFragmentToClipboard(hwndOwner, fragmentUtf8, plainText);
 }
 
 std::string HtmlExporter::GeneratePreviewHtml(
@@ -553,8 +654,11 @@ std::wstring HtmlExporter::DocumentToPlainText(const MarkdownDocument& doc) {
 
 OperationResult HtmlExporter::CopyToClipboard(HWND hwndOwner, const MarkdownDocument& doc, const std::wstring& title, PreviewTheme theme, const std::wstring& beardedVariant) {
     auto components = GeneratePreviewComponents(doc, title, theme, 1.0f, false, 0, beardedVariant);
-    std::string cfHtml = GenerateCfHtml(components.bodyHtml);
-    std::wstring plain = DocumentToPlainText(doc);
+    return CopyFragmentToClipboard(hwndOwner, components.bodyHtml, DocumentToPlainText(doc));
+}
+
+OperationResult HtmlExporter::CopyFragmentToClipboard(HWND hwndOwner, const std::string& fragmentUtf8, const std::wstring& plain) {
+    std::string cfHtml = GenerateCfHtml(fragmentUtf8);
     UINT format = EXPORT_IO(registerFormat, "HTML Format");
     if (!format) return {OperationStatus::Failed, IoError(), L"Cannot register the HTML clipboard format."};
     ClipboardMemory htmlMemory, textMemory;
