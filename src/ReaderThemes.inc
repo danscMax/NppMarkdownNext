@@ -957,7 +957,7 @@ if (window.chrome && window.chrome.webview) {
             applyReaderSettings(data);
         } else if (data.type === 'operationResult') {
             showOperationResult(data);
-        } else if (data.type === 'tableWidths') {
+        } else if (data.type === 'documentState' && data.kind === 'tableWidths') {
             receiveTableWidths(String(data.bufferId || ''), String(data.value || ''));
         }
     });

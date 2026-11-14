@@ -69,9 +69,9 @@ struct ExportScope {
     ~ExportScope() { finish(); }
 };
 
-// Reader column widths are stored per document under a hash of its case-folded path:
+// Per-document state is stored under a hash of the document's case-folded path:
 // INI keys cannot carry every path character ('=', ';', '[').
-std::wstring TableWidthsKey(std::wstring path) {
+std::wstring DocumentKey(std::wstring path) {
     CharLowerBuffW(path.data(), static_cast<DWORD>(path.size()));
     uint64_t hash = 1469598103934665603ULL;
     for (wchar_t c : path) { hash ^= static_cast<uint16_t>(c); hash *= 1099511628211ULL; }
@@ -95,9 +95,16 @@ bool IsOnSameShare(const std::wstring& target, const std::wstring& document) {
     return !share.empty() && share == UncShare(document);
 }
 
-// The reader's wire format "fp:w,w;fp:w" (see persistTableWidths): only these characters, bounded size.
-bool IsTableWidthsValue(const std::wstring& value) {
-    return value.size() <= 4096 && value.find_first_not_of(L"0123456789abcdef:,;") == std::wstring::npos;
+// Each kind of per-document state: its INI section, the reader's message prefix and the characters its wire
+// format may use (validated both ways; see persistTableWidths / persistReadingPosition in the reader).
+struct DocumentStateSpec { const wchar_t* section; const wchar_t* message; const wchar_t* charset; size_t maxLength; };
+constexpr DocumentStateSpec kDocumentStates[] = {
+    {L"Widths", L"tableWidths", L"0123456789abcdef:,;", 4096},  // "fp:w,w;fp:w"
+    {L"Reading", L"readingPosition", L"0123456789:-", 24},       // "line:offset"
+};
+const DocumentStateSpec& Spec(DocumentState kind) { return kDocumentStates[static_cast<size_t>(kind)]; }
+bool IsDocumentStateValue(DocumentState kind, const std::wstring& value) {
+    return value.size() <= Spec(kind).maxLength && value.find_first_not_of(Spec(kind).charset) == std::wstring::npos;
 }
 }
 
@@ -119,7 +126,11 @@ void NppMarkdownNext::Init(HINSTANCE hInst, NppData nppData) {
         GetTempPathW(MAX_PATH, configDir);
     }
     m_configPath = std::wstring(configDir) + L"\\NppMarkdownNext.ini";
-    m_tableWidthsPath = std::wstring(configDir) + L"\\NppMarkdownNext.tables.ini";
+    m_documentStatePath = std::wstring(configDir) + L"\\NppMarkdownNext.documents.ini";
+    // one-time move of the column widths kept by the first version under the older name
+    const std::wstring legacyTables = std::wstring(configDir) + L"\\NppMarkdownNext.tables.ini";
+    if (GetFileAttributesW(m_documentStatePath.c_str()) == INVALID_FILE_ATTRIBUTES)
+        MoveFileExW(legacyTables.c_str(), m_documentStatePath.c_str(), 0);
     m_config.Load(m_configPath);
     m_restorePanelOnStartup = m_config.isPanelVisible;
     m_config.isPanelVisible = false;
@@ -623,9 +634,12 @@ void NppMarkdownNext::OnSettingsMessage(const std::wstring& message) {
         OpenLink(message.substr(9));
         return;
     }
-    if (message.starts_with(L"tableWidths:")) {
-        SaveTableWidths(message.substr(12));
-        return;
+    for (const DocumentState kind : {DocumentState::TableWidths, DocumentState::ReadingPosition}) {
+        const std::wstring prefix = std::wstring(Spec(kind).message) + L":";
+        if (message.starts_with(prefix)) {
+            SaveDocumentStateMessage(kind, message.substr(prefix.size()));
+            return;
+        }
     }
     if (message == L"toggleAutoShow") {
         m_config.autoShowPanel = !m_config.autoShowPanel;
@@ -857,7 +871,10 @@ bool NppMarkdownNext::ExecuteRender(bool force) {
     // keep the separator of a drive root: "C:" alone would mean that drive's current directory
     m_webViewViewer.SetDocumentFolder(folderEnd == std::wstring::npos ? L"" : currentPath.substr(0, folderEnd == 2 ? 3 : folderEnd));
     // Forced renders (tab switch, panel shown, page reload) refresh the saved widths; typing renders keep the reader's copy.
-    if (force && folderEnd != std::wstring::npos) m_webViewViewer.SetTableWidths(bufferId, LoadTableWidths(currentPath));
+    if (force && folderEnd != std::wstring::npos) {
+        for (const DocumentState kind : {DocumentState::TableWidths, DocumentState::ReadingPosition})
+            m_webViewViewer.SetDocumentState(Spec(kind).message, bufferId, LoadDocumentState(kind, currentPath));
+    }
 
     if (m_webViewViewer.UpdateMarkdown(utf8Content, docTitle, isDark, m_config.isSmartBiDiEnabled, caretLine, bufferId)) {
         m_lastRawContentUtf8 = utf8Content;
@@ -867,26 +884,49 @@ bool NppMarkdownNext::ExecuteRender(bool force) {
     return false;
 }
 
-std::wstring NppMarkdownNext::LoadTableWidths(const std::wstring& path) const {
-    const std::wstring key = TableWidthsKey(path);
-    if (auto cached = m_tableWidthsCache.find(key); cached != m_tableWidthsCache.end()) return cached->second;
-    if (m_tableWidthsPath.empty()) return L"";
-    std::wstring value(4097, L'\0');
-    value.resize(GetPrivateProfileStringW(L"Widths", key.c_str(), L"", value.data(),
-                                          static_cast<DWORD>(value.size()), m_tableWidthsPath.c_str()));
-    return IsTableWidthsValue(value) ? value : L"";
+std::wstring NppMarkdownNext::LoadDocumentState(DocumentState kind, const std::wstring& path) const {
+    const std::wstring key = std::wstring(Spec(kind).section) + L"/" + DocumentKey(path);
+    if (auto cached = m_documentStateCache.find(key); cached != m_documentStateCache.end()) return cached->second;
+    if (m_documentStatePath.empty()) return L"";
+    std::wstring value(Spec(kind).maxLength + 1, L'\0');
+    value.resize(GetPrivateProfileStringW(Spec(kind).section, DocumentKey(path).c_str(), L"", value.data(),
+                                          static_cast<DWORD>(value.size()), m_documentStatePath.c_str()));
+    return IsDocumentStateValue(kind, value) ? value : L"";
+}
+
+// Keeps the value for the session even when the file cannot be written (and says so).
+// shortcut: entries of deleted files are never pruned (~100 bytes each); add LRU pruning if the file ever grows large.
+void NppMarkdownNext::StoreDocumentState(DocumentState kind, const std::wstring& path, const std::wstring& value) {
+    m_documentStateCache[std::wstring(Spec(kind).section) + L"/" + DocumentKey(path)] = value;
+    if (m_documentStatePath.empty()) return;
+    if (!WritePrivateProfileStringW(Spec(kind).section, DocumentKey(path).c_str(), value.empty() ? nullptr : value.c_str(), m_documentStatePath.c_str())) {
+        const DWORD error = GetLastError();
+        NppLog("StoreDocumentState: write failed error=%lu", error);
+        if (m_webViewViewer.IsPageReady())
+            m_webViewViewer.ReportOperationResult(L"saveSettings", {OperationStatus::Failed, error,
+                L"Reader state for this document applies to this session, but could not be saved. Check the configuration folder permissions."});
+    }
+}
+
+// Save As / rename: the document keeps its column widths and reading place under the new name (copied, so a
+// Save As leaves the original's state in place too).
+void NppMarkdownNext::CopyDocumentState(const std::wstring& from, const std::wstring& to) {
+    if (from.find(L'\\') == std::wstring::npos || to.find(L'\\') == std::wstring::npos || DocumentKey(from) == DocumentKey(to)) return;
+    for (const DocumentState kind : {DocumentState::TableWidths, DocumentState::ReadingPosition}) {
+        const std::wstring value = LoadDocumentState(kind, from);
+        if (!value.empty() && LoadDocumentState(kind, to).empty()) StoreDocumentState(kind, to, value);
+    }
 }
 
 // message = "<bufferId>:<value>"; an empty value removes the document's entry.
-// shortcut: entries of deleted/renamed files are never pruned (~100 bytes each); add LRU pruning if the file ever grows large.
-void NppMarkdownNext::SaveTableWidths(const std::wstring& message) {
+void NppMarkdownNext::SaveDocumentStateMessage(DocumentState kind, const std::wstring& message) {
     const size_t colon = message.find(L':');
     if (colon == 0 || colon == std::wstring::npos || colon > 20 ||
-        message.find_first_not_of(L"0123456789") != colon || m_tableWidthsPath.empty()) return;
+        message.find_first_not_of(L"0123456789") != colon) return;
     const std::wstring value = message.substr(colon + 1);
-    if (!IsTableWidthsValue(value)) {
-        // the reader trims its list to fit, so only a malformed message lands here: nothing to tell the user
-        NppLog("SaveTableWidths: rejected a malformed value (%u chars)", static_cast<unsigned>(value.size()));
+    if (!IsDocumentStateValue(kind, value)) {
+        // the reader bounds what it sends, so only a malformed message lands here: nothing to tell the user
+        NppLog("SaveDocumentStateMessage: rejected a malformed value (%u chars)", static_cast<unsigned>(value.size()));
         return;
     }
     const auto bufferId = static_cast<WPARAM>(std::wcstoull(message.substr(0, colon).c_str(), nullptr, 10));
@@ -895,16 +935,8 @@ void NppMarkdownNext::SaveTableWidths(const std::wstring& message) {
     std::wstring path(static_cast<size_t>(length) + 1, L'\0');
     SendMessage(m_nppData._nppHandle, NPPM_GETFULLPATHFROMBUFFERID, bufferId, reinterpret_cast<LPARAM>(path.data()));
     path.resize(wcsnlen(path.c_str(), path.size()));
-    if (path.find(L'\\') == std::wstring::npos) return; // unsaved tab: the reader keeps the widths for the session only
-    const std::wstring key = TableWidthsKey(path);
-    m_tableWidthsCache[key] = value;
-    if (!WritePrivateProfileStringW(L"Widths", key.c_str(), value.empty() ? nullptr : value.c_str(), m_tableWidthsPath.c_str())) {
-        const DWORD error = GetLastError();
-        NppLog("SaveTableWidths: write failed error=%lu", error);
-        if (m_webViewViewer.IsPageReady())
-            m_webViewViewer.ReportOperationResult(L"saveSettings", {OperationStatus::Failed, error,
-                L"Column widths apply to this session, but could not be saved. Check the configuration folder permissions."});
-    }
+    if (path.find(L'\\') == std::wstring::npos) return; // unsaved tab: the reader keeps its state for the session only
+    StoreDocumentState(kind, path, value);
 }
 
 // A link clicked in the preview (the reader routes every non-anchor link here).
@@ -1104,6 +1136,7 @@ void NppMarkdownNext::OnDocumentPathChanged(UINT_PTR bufferId) {
     if (!m_isNppReady || m_shuttingDown || bufferId != GetCurrentBufferId()) return;
     std::wstring path = GetCurrentBufferPath();
     if (bufferId == m_activeBufferId && path == m_activeBufferPath) return;
+    if (bufferId == m_activeBufferId) CopyDocumentState(m_activeBufferPath, path); // renamed or saved under a new name
     m_activeBufferId = bufferId;
     m_activeBufferPath = std::move(path);
     ApplyAutoShowPanel();

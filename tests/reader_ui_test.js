@@ -188,6 +188,17 @@ async () => {
     window.__emit({type:'notice', text:'Native notice'});
     expect(document.getElementById('toast-msg').textContent === 'Native notice', 'Host notices appear as toasts');
 
+    // The reading place saved for a file (host message) is restored when the file is shown again
+    const placeDoc = Array.from({length: 120}, (_, i) => 'Place ' + i).join('\n\n');
+    window.__emit({type: 'documentState', kind: 'readingPosition', bufferId: '51', value: '80:0'});
+    await render(placeDoc, '51', -1);
+    const placed = content.querySelector('[data-line="80"]').getBoundingClientRect().top;
+    expect(Math.abs(placed) < 3, 'A saved reading place is restored for the file (' + Math.round(placed) + ')');
+    window.__messages.length = 0;
+    scrollTo(scrollRoot().scrollTop + 400);
+    await new Promise(resolve => setTimeout(resolve, 800));
+    expect(window.__messages.some(message => /^readingPosition:51:\d+:-?\d+$/.test(message)), 'Scrolling saves the new reading place for the file');
+
     // Scrolling: another document jumps to its caret without animation; typing on the caret line does not re-centre
     const longDoc = Array.from({length: 120}, (_, i) => 'Line ' + i).join('\n\n');
     await render(longDoc, '41', -1);

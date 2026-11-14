@@ -592,9 +592,23 @@ controller_js = r"""
     var preceding = currentDocument.index.headings.filter(function(heading) { return heading.line !== null && heading.line <= anchor.line; });
     readingPositions.delete(currentDocument.bufferId);
     var heading = preceding.length ? preceding[preceding.length - 1] : null;
-    readingPositions.set(currentDocument.bufferId, {line: anchor.line, heading: heading ? heading.id : '', relativeLine: heading ? anchor.line - heading.line : 0, offset: anchor.element.getBoundingClientRect().top});
+    var position = {line: anchor.line, heading: heading ? heading.id : '', relativeLine: heading ? anchor.line - heading.line : 0, offset: Math.round(anchor.element.getBoundingClientRect().top)};
+    readingPositions.set(currentDocument.bufferId, position);
     while (readingPositions.size > 100) readingPositions.delete(readingPositions.keys().next().value);
+    // The host keeps it per file ("line:offset"), so the place survives closing the tab and restarting.
+    var wire = position.line + ':' + Math.max(-99999, Math.min(99999, position.offset));
+    if (/^\d+$/.test(currentDocument.bufferId) && sentReadingPositions.get(currentDocument.bufferId) !== wire && window.chrome && window.chrome.webview) {
+      sentReadingPositions.set(currentDocument.bufferId, wire);
+      window.chrome.webview.postMessage('readingPosition:' + currentDocument.bufferId + ':' + wire);
+    }
   }
+  var sentReadingPositions = new Map();
+  // Scrolling alone (no edit, no tab switch) also moves the place: capture once the reader stops scrolling.
+  var readingScrollTimer = 0;
+  document.addEventListener('scroll', function() {
+    clearTimeout(readingScrollTimer);
+    readingScrollTimer = setTimeout(captureReadingPosition, 600);
+  }, {passive: true, capture: true});
 
   function finalizeDocument(data, state, sequence) {
     var index = state === 'ready' ? buildDocumentIndex(contentEl) : {headings: [], blocks: []};
@@ -912,6 +926,14 @@ controller_js = r"""
 
       if (data.type === 'render') {
         applyRender(data);
+      } else if (data.type === 'documentState' && data.kind === 'readingPosition') {
+        // the place saved for this file: used only when the reader has none fresher for the buffer
+        var saved = /^(\d{1,7}):(-?\d{1,6})$/.exec(String(data.value || ''));
+        var buffer = String(data.bufferId || '');
+        if (saved && !readingPositions.has(buffer)) {
+          readingPositions.set(buffer, {line: Number(saved[1]), heading: '', relativeLine: 0, offset: Number(saved[2])});
+          sentReadingPositions.set(buffer, data.value);
+        }
       } else if (data.type === 'bufferClosed') {
         readingPositions.delete(data.bufferId);
         if (currentDocument && currentDocument.bufferId === data.bufferId) currentDocument.closed = true;

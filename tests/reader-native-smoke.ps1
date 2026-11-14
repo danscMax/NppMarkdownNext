@@ -408,7 +408,7 @@ try {
     } 'NativeGoldPaletteRestored'
     Assert-Restored $state 'GoldRestoredBeforeCrashes'
     # Column widths: the reader sends them, the host writes them to its own file...
-    $tablesIni = Join-Path $config 'NppMarkdownNext.tables.ini'
+    $tablesIni = Join-Path $config 'NppMarkdownNext.documents.ini'
     $fingerprint = (Invoke-Probe 'evaluate' '(()=>{const t=document.querySelector("#content table");const fp=tableFingerprint(t,{});window.chrome.webview.postMessage("tableWidths:"+window.readerDocumentIndex.bufferId+":"+fp+":111,222");return fp;})()').value
     $watch.Restart()
     while (!((Test-Path -LiteralPath $tablesIni) -and [IO.File]::ReadAllText($tablesIni).Contains("=$($fingerprint):111,222")) -and $watch.Elapsed.TotalSeconds -lt 10) { Start-Sleep -Milliseconds 100 }

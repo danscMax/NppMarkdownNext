@@ -103,7 +103,7 @@ ZoomLevelPercent=100
 SupportedExtensions=.md,.markdown,.mdown,.mkd,.rst
 ```
 
-Only settings changed in this Notepad++ window are written, so two open instances do not overwrite each other's choices. Resized table columns are kept separately in `NppMarkdownNext.tables.ini` in the same folder (one line per document, keyed by a hash of its path).
+Only settings changed in this Notepad++ window are written, so two open instances do not overwrite each other's choices. Per-document reader state (resized table columns, the reading place) is kept separately in `NppMarkdownNext.documents.ini` in the same folder (one line per document, keyed by a hash of its path; it follows a renamed or saved-as document).
 
 ## Architecture
 

@@ -53,7 +53,7 @@ public:
     void ScrollToLine(int line);
     void SetTheme(bool isDark, const std::wstring& themeId = L"follow");
     void SetBiDi(bool isBiDi);
-    void SetTableWidths(const std::wstring& bufferId, const std::wstring& value);
+    void SetDocumentState(const std::wstring& kind, const std::wstring& bufferId, const std::wstring& value);
     void SetDocumentFolder(const std::wstring& folder);
     void PostNotice(const std::wstring& text);
     bool StartFind(const std::wstring& term);

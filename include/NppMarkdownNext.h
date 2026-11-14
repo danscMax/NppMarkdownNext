@@ -9,6 +9,9 @@
 #include "WebView2Viewer.h"
 #include "MarkdownParser.h"
 
+// Reader state remembered per document (column widths, reading place), see NppMarkdownNext.documents.ini.
+enum class DocumentState { TableWidths = 0, ReadingPosition = 1 };
+
 class NppMarkdownNext {
 public:
     static NppMarkdownNext& Instance();
@@ -73,8 +76,10 @@ private:
     void ShowExportWarning(const std::wstring& message);
     void HandleCheckboxToggle(const CheckboxRequest& request);
     void OnSettingsMessage(const std::wstring& message);
-    std::wstring LoadTableWidths(const std::wstring& path) const;
-    void SaveTableWidths(const std::wstring& message);
+    std::wstring LoadDocumentState(DocumentState kind, const std::wstring& path) const;
+    void StoreDocumentState(DocumentState kind, const std::wstring& path, const std::wstring& value);
+    void SaveDocumentStateMessage(DocumentState kind, const std::wstring& message);
+    void CopyDocumentState(const std::wstring& from, const std::wstring& to);
     void OpenLink(const std::wstring& href);
     void UpdateStatusFont();
     COLORREF StatusColor(bool background) const;
@@ -92,8 +97,8 @@ private:
 
     PluginConfig m_config;
     std::wstring m_configPath;
-    std::wstring m_tableWidthsPath;
-    std::unordered_map<std::wstring, std::wstring> m_tableWidthsCache; // key -> value; keeps the session's widths if the file write fails
+    std::wstring m_documentStatePath; // NppMarkdownNext.documents.ini: per-document reader state
+    std::unordered_map<std::wstring, std::wstring> m_documentStateCache; // "section/key" -> value; survives a failed write
     WebView2Viewer m_webViewViewer;
     MarkdownDocument m_currentDoc;
 

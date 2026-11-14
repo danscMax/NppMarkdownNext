@@ -658,8 +658,8 @@ void WebView2Viewer::SetDocumentFolder(const std::wstring& folder) {
     ReleaseCom(webView);
 }
 
-void WebView2Viewer::SetTableWidths(const std::wstring& bufferId, const std::wstring& value) {
-    PostJson(L"{\"type\":\"tableWidths\",\"bufferId\":\"" + EscapeJsonString(bufferId) + L"\",\"value\":\"" + EscapeJsonString(value) + L"\"}");
+void WebView2Viewer::SetDocumentState(const std::wstring& kind, const std::wstring& bufferId, const std::wstring& value) {
+    PostJson(L"{\"type\":\"documentState\",\"kind\":\"" + EscapeJsonString(kind) + L"\",\"bufferId\":\"" + EscapeJsonString(bufferId) + L"\",\"value\":\"" + EscapeJsonString(value) + L"\"}");
 }
 
 void WebView2Viewer::SyncUiState(const PluginConfig& config) {
