@@ -11,6 +11,9 @@
 #include <optional>
 #include <commctrl.h>
 #include <shlwapi.h>
+#ifndef URL_UNESCAPE_AS_UTF8
+#define URL_UNESCAPE_AS_UTF8 0x00040000 // Windows 8+ (shlwapi.h); older MinGW headers lack the name
+#endif
 #include <commdlg.h>
 #include <shellapi.h>
 #include <algorithm>

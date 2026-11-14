@@ -376,7 +376,8 @@ void TestHtmlExporter() {
         HANDLE secret = CreateFileW(outside.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
         assert(secret != INVALID_HANDLE_VALUE && WriteFile(secret, "SECRET", 6, &written, nullptr));
         CloseHandle(secret);
-        if (CreateSymbolicLinkW(link.c_str(), outside.c_str(), SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
+        constexpr DWORD kUnprivilegedLink = 0x2; // SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE, absent from some MinGW headers
+        if (CreateSymbolicLinkW(link.c_str(), outside.c_str(), kUnprivilegedLink)) {
             const std::string linked = HtmlExporter::EmbedDocumentImages(std::string("<img src=\"") + kDocumentHostUrlUtf8 + "link.png\">", folder);
             assert(linked.find("U0VDUkVU") == std::string::npos && linked.find("src=\"link.png\"") != std::string::npos);
             DeleteFileW(link.c_str());
