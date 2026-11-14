@@ -77,7 +77,27 @@ body.toc-open #toc-fab { right: 332px; }
 .reader-warning-text { flex: 1; min-width: 0; }
 .reader-warning-close { flex: 0 0 auto; border: 0; background: none; color: inherit; cursor: pointer; font-size: 16px; line-height: 1; padding: 0 2px; opacity: 0.7; }
 .reader-warning-close:hover { opacity: 1; }
-@media print { #toc-fab, #reader-menu, .reader-copy-code, .reader-col-grip { display: none !important; } }
+/* Remote image placeholder: the document asked for a network image; nothing is fetched until clicked */
+.reader-remote-image {
+    display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 6px 10px; margin: 2px 0;
+    border: 1px dashed var(--border-color); border-radius: 8px; background: var(--code-bg); color: var(--text-secondary);
+    font: 12px var(--font-ui); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.reader-remote-image::before { content: '\1F5BC'; }
+.reader-remote-image:hover { color: var(--link-color); border-color: var(--link-color); }
+
+@media print {
+    #toc-fab, #reader-menu, .reader-copy-code, .reader-col-grip, .reader-remote-image { display: none !important; }
+    /* paper has no scrollbars: tables print whole, at page width, and the outline drawer's space is not reserved */
+    body.toc-open #reader-wrap { padding-right: 20px; }
+    #content .reader-table-wrap, #content .reader-table-wrap.reader-table-overflow {
+        display: block; width: auto; max-height: none; overflow: visible; margin-inline-start: 0;
+    }
+    #content .reader-table-wrap > table { width: 100% !important; table-layout: auto !important; }
+    #content .reader-table-wrap :is(th, td) { width: auto !important; }
+    #content .reader-table-overflow thead th { position: static; }
+    #content pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+}
 )TOOLS_CSS";
 
 inline constexpr const char* s_readerToolsHtml = R"TOOLS_HTML(
@@ -452,9 +472,31 @@ function resolveDocumentImages(detail) {
     });
 }
 
+// Remote images arrive without src (the sanitizer moved it to data-remote-src): offer to load each on request.
+function decorateRemoteImages() {
+    document.querySelectorAll('#content img[data-remote-src]:not([src])').forEach(function(image) {
+        if (image.previousElementSibling && image.previousElementSibling.classList.contains('reader-remote-image')) return;
+        var url = image.getAttribute('data-remote-src'), host = '';
+        try { host = new URL(url, 'https://invalid.local/').host; } catch (e) {}
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'reader-remote-image';
+        button.textContent = 'Show image from ' + (host || 'the internet') + (image.alt ? ': ' + image.alt : '');
+        button.title = url;
+        button.addEventListener('click', function(event) {
+            event.stopPropagation();
+            image.src = url;
+            button.remove();
+        });
+        button.addEventListener('dblclick', function(event) { event.stopPropagation(); });
+        image.before(button);
+    });
+}
+
 // ---- Wiring ----------------------------------------------------------------------------------------------
 function decorateReaderDocument(detail) {
     closeReaderMenu();
+    decorateRemoteImages();
     resolveDocumentImages(detail);
     layoutReaderTables(detail);
     decorateCodeBlocks();

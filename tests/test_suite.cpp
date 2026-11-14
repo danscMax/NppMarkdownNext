@@ -4,6 +4,7 @@
 #include "../include/HtmlExporter.h"
 #include "../include/ThemeCatalog.h"
 #include "../include/HeadingIds.h"
+#include "../include/LinkPolicy.h"
 #include "../include/PluginInterface.h"
 #include <iostream>
 #include <fstream>
@@ -328,6 +329,18 @@ void TestHtmlExporter() {
     assert(html.find(L"<ul") != std::wstring::npos);
     assert(html.find(L"</ul>") != std::wstring::npos);
     assert(html.find(L"alert-callout") != std::wstring::npos);
+
+    // Shared files keep only safe link and image schemes (the same rule the preview's link router uses)
+    {
+        assert(LinkScheme(L"JavaScript:alert(1)") == L"javascript" && LinkScheme(L" \x01java\tscript:x") == L"javascript");
+        assert(LinkScheme(L"C:\\docs\\x.md").empty() && LinkScheme(L"page.md?a=b:c").empty() && LinkScheme(L"#anchor").empty());
+        assert(LinkScheme(L"mailto:a@b.c") == L"mailto" && IsSafeLinkScheme(L"https") && !IsSafeLinkScheme(L"data") && IsSafeImageScheme(L"data"));
+        std::wstring shared = HtmlExporter::ExportToHtml(MarkdownParser::Parse(
+            L"[bad](javascript:alert) [ok](https://example.com) ![pic](vbscript:x) [rel](notes.md)\n"), L"Links", PreviewTheme::Light);
+        assert(shared.find(L"javascript:alert") == std::wstring::npos && shared.find(L"vbscript:") == std::wstring::npos);
+        assert(shared.find(L"href=\"https://example.com\"") != std::wstring::npos && shared.find(L"href=\"notes.md\"") != std::wstring::npos);
+        assert(shared.find(L">bad<") == std::wstring::npos && shared.find(L"bad") != std::wstring::npos);
+    }
 
     // Nested lists stay nested, ordered lists keep their first number, long documents get a contents list
     {

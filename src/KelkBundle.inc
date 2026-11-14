@@ -3426,6 +3426,23 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
     }]});
   }
 
+  // Privacy: nothing in a document may fetch from the network on its own. The sanitizer parses in an inert
+  // document, so moving remote sources aside here happens before any request; the reader offers a
+  // "load" button per image (data-remote-src). Media and inline-style URLs are dropped outright.
+  var REMOTE_URL = /^\s*(?:[a-z][a-z0-9+.-]*:)?\/\//i;
+  if (typeof DOMPurify !== 'undefined' && DOMPurify.addHook) {
+    DOMPurify.addHook('afterSanitizeAttributes', function(node) {
+      if (node.nodeName === 'IMG' && REMOTE_URL.test(node.getAttribute('src') || '')) {
+        node.setAttribute('data-remote-src', node.getAttribute('src'));
+        node.removeAttribute('src');
+      }
+      if (node.hasAttribute('srcset')) node.removeAttribute('srcset');
+      ['poster', 'background'].forEach(function(name) { if (node.hasAttribute(name)) node.removeAttribute(name); });
+      if (/^(?:VIDEO|AUDIO|SOURCE|TRACK|INPUT)$/.test(node.nodeName) && REMOTE_URL.test(node.getAttribute('src') || '')) node.removeAttribute('src');
+      if (/url\s*\(/i.test(node.getAttribute('style') || '')) node.removeAttribute('style');
+    });
+  }
+
   function renderFootnotes() {
     var items = footnotes.order.filter(function(id) { return id in footnotes.notes; }).map(function(id) {
       var safe = escapeHtml(id);
@@ -3724,7 +3741,7 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
 
       var html = parseWithLines(mdText);
       if (typeof DOMPurify !== 'undefined' && typeof DOMPurify.sanitize === 'function') {
-        html = DOMPurify.sanitize(html, { ADD_ATTR: ['data-line', 'data-source-unmapped', 'data-task-key', 'target', 'dir', 'align'] });
+        html = DOMPurify.sanitize(html, { ADD_ATTR: ['data-line', 'data-source-unmapped', 'data-task-key', 'data-remote-src', 'target', 'dir', 'align'] });
       }
 
       contentEl.innerHTML = html;
@@ -7344,6 +7361,23 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
     }]});
   }
 
+  // Privacy: nothing in a document may fetch from the network on its own. The sanitizer parses in an inert
+  // document, so moving remote sources aside here happens before any request; the reader offers a
+  // "load" button per image (data-remote-src). Media and inline-style URLs are dropped outright.
+  var REMOTE_URL = /^\s*(?:[a-z][a-z0-9+.-]*:)?\/\//i;
+  if (typeof DOMPurify !== 'undefined' && DOMPurify.addHook) {
+    DOMPurify.addHook('afterSanitizeAttributes', function(node) {
+      if (node.nodeName === 'IMG' && REMOTE_URL.test(node.getAttribute('src') || '')) {
+        node.setAttribute('data-remote-src', node.getAttribute('src'));
+        node.removeAttribute('src');
+      }
+      if (node.hasAttribute('srcset')) node.removeAttribute('srcset');
+      ['poster', 'background'].forEach(function(name) { if (node.hasAttribute(name)) node.removeAttribute(name); });
+      if (/^(?:VIDEO|AUDIO|SOURCE|TRACK|INPUT)$/.test(node.nodeName) && REMOTE_URL.test(node.getAttribute('src') || '')) node.removeAttribute('src');
+      if (/url\s*\(/i.test(node.getAttribute('style') || '')) node.removeAttribute('style');
+    });
+  }
+
   function renderFootnotes() {
     var items = footnotes.order.filter(function(id) { return id in footnotes.notes; }).map(function(id) {
       var safe = escapeHtml(id);
@@ -7642,7 +7676,7 @@ window.READER_HEADING_POLICY={"unicodeVersion":"14.0.0","reservedIds":["content"
 
       var html = parseWithLines(mdText);
       if (typeof DOMPurify !== 'undefined' && typeof DOMPurify.sanitize === 'function') {
-        html = DOMPurify.sanitize(html, { ADD_ATTR: ['data-line', 'data-source-unmapped', 'data-task-key', 'target', 'dir', 'align'] });
+        html = DOMPurify.sanitize(html, { ADD_ATTR: ['data-line', 'data-source-unmapped', 'data-task-key', 'data-remote-src', 'target', 'dir', 'align'] });
       }
 
       contentEl.innerHTML = html;

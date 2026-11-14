@@ -768,8 +768,9 @@ bool WebView2Viewer::UpdateMarkdown(const std::string& markdownUtf8, const std::
 }
 
 void WebView2Viewer::OnWebMessageReceived(const std::wstring& message) {
-    std::string msgUtf8 = BiDiEngine::WideToUtf8(message);
-    NppLog("OnWebMessageReceived: %s", msgUtf8.c_str());
+    // Only the command name: payloads carry link targets, search text and document paths.
+    const std::string command = BiDiEngine::WideToUtf8(message.substr(0, (std::min)(message.find(L':'), static_cast<size_t>(40))));
+    NppLog("OnWebMessageReceived: %s (%u chars)", command.c_str(), static_cast<unsigned>(message.size()));
 
     const std::wstring prefixError = L"jsError:";
     if (message.find(prefixError) == 0) {

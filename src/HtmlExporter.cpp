@@ -3,6 +3,7 @@
 #include "KelkBundle.inc"
 #include "ReaderThemes.inc"
 #include "../include/HeadingIds.h"
+#include "../include/LinkPolicy.h"
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -247,11 +248,18 @@ std::wstring HtmlExporter::InlinesToHtml(const std::vector<MarkdownSpan>& inline
                    << EscapeHtml(span.text) << L"$</bdi></span>";
                 break;
             case InlineStyleType::Link:
-                ss << L"<a href=\"" << EscapeHtml(span.extra) << L"\" target=\"_blank\" rel=\"noopener\">"
-                   << EscapeHtml(span.text) << L"</a>";
+                // A shared file must not carry script links (javascript:, vbscript:, data:...): keep the text only.
+                if (IsSafeLinkScheme(LinkScheme(span.extra)))
+                    ss << L"<a href=\"" << EscapeHtml(span.extra) << L"\" target=\"_blank\" rel=\"noopener\">"
+                       << EscapeHtml(span.text) << L"</a>";
+                else
+                    ss << EscapeHtml(span.text);
                 break;
             case InlineStyleType::Image:
-                ss << L"<img src=\"" << EscapeHtml(span.extra) << L"\" alt=\"" << EscapeHtml(span.text) << L"\" />";
+                if (IsSafeImageScheme(LinkScheme(span.extra)))
+                    ss << L"<img src=\"" << EscapeHtml(span.extra) << L"\" alt=\"" << EscapeHtml(span.text) << L"\" />";
+                else
+                    ss << EscapeHtml(span.text);
                 break;
             case InlineStyleType::Normal:
             default:

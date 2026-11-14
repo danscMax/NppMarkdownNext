@@ -4,6 +4,7 @@
 #include "../include/Resource.h"
 #include "../include/NppLog.h"
 #include "../include/ThemeCatalog.h"
+#include "../include/LinkPolicy.h"
 #include <commctrl.h>
 #include <shlwapi.h>
 #include <commdlg.h>
@@ -908,28 +909,23 @@ void NppMarkdownNext::SaveTableWidths(const std::wstring& message) {
 // run a program).
 void NppMarkdownNext::OpenLink(const std::wstring& href) {
     if (href.empty() || href.size() > 4096 || href.find_first_of(L"\r\n") != std::wstring::npos) return;
-    std::wstring lower = href;
-    CharLowerBuffW(lower.data(), static_cast<DWORD>(lower.size()));
-    if (lower.starts_with(L"http://") || lower.starts_with(L"https://") || lower.starts_with(L"mailto:")) {
+    const std::wstring scheme = LinkScheme(href);
+    if (scheme == L"http" || scheme == L"https" || scheme == L"mailto") {
         ShellExecuteW(nullptr, L"open", href.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         return;
     }
     std::wstring target;
-    if (lower.starts_with(L"file:")) {
+    if (scheme == L"file") {
         std::wstring path(4096, L'\0');
         DWORD length = static_cast<DWORD>(path.size());
         if (FAILED(PathCreateFromUrlW(href.c_str(), path.data(), &length, 0))) return;
         path.resize(length);
         target = path;
+    } else if (!scheme.empty()) {
+        // another scheme (tel:, ftp:, app protocols) is not opened from a document
+        m_webViewViewer.PostNotice(L"This kind of link is not opened from the preview: " + href);
+        return;
     } else {
-        // another scheme (tel:, ftp:, app protocols) is not opened from a document; "C:\..." is a drive, not a scheme,
-        // and "page.md?a=b:c" has no scheme (only letters, digits, + . - may precede it)
-        size_t scheme = 0;
-        while (scheme < lower.size() && (iswalnum(lower[scheme]) || lower[scheme] == L'+' || lower[scheme] == L'.' || lower[scheme] == L'-')) ++scheme;
-        if (scheme > 1 && scheme < lower.size() && lower[scheme] == L':' && iswalpha(lower[0])) {
-            m_webViewViewer.PostNotice(L"This kind of link is not opened from the preview: " + href);
-            return;
-        }
         target = href.substr(0, href.find_first_of(L"#?"));
         if (target.empty()) return;
         DWORD length = static_cast<DWORD>(target.size() + 1);
