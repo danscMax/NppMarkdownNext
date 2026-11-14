@@ -180,10 +180,10 @@ These checks create isolated fixtures under the ignored `bin` directory and vali
 
 ### Running Settings UI Checks
 
-Generate the settings UI regression fixture with `python tests/reader_fixture.py`.
-Serve `bin/reader-validation` locally, open the generated reader page, and evaluate
-the async function in `tests/reader_ui_test.js` to check themes, hover previews,
-settings commands, nested lists, and empty content against a mock host.
+Run `python tests/run_reader_ui.py` (needs `pip install playwright` and Microsoft Edge; CI runs it too).
+It builds the mock-host reader page (`tests/reader_fixture.py`) and evaluates `tests/reader_ui_test.js` in Edge:
+themes, settings, language switching, reader tools, export payload, privacy of remote content and layout bounds.
+For the real Notepad++ and WebView2, run `pwsh tests/reader-native-smoke.ps1 -BinaryDirectory bin` after a build.
 
 ## License
 
